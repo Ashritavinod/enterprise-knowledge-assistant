@@ -12,6 +12,9 @@ import os
 import unittest
 from unittest import mock
 
+from dotenv import load_dotenv
+
+load_dotenv()  # TEST_DATABASE_URL may be set in .env
 os.environ["DATABASE_URL"] = os.getenv(
     "TEST_DATABASE_URL",
     "postgresql+psycopg://postgres:postgres@localhost:5432/knowledge_assistant_test",

@@ -8,8 +8,8 @@ from .vector_store import get_retrieval_min_score, get_vector_store
 logger = logging.getLogger(__name__)
 
 
-def retrieve_documents(question: str) -> list[dict[str, str | int | float]]:
-    """Return the three most similar policy chunks for a question."""
+def retrieve_documents(question: str, k: int = 3) -> list[dict[str, str | int | float]]:
+    """Return the `k` most similar chunks for a question (above the relevance threshold)."""
     logger.info("Executing FAISS query: %s", question)
     vector_store = get_vector_store()
     if vector_store.index.ntotal == 0:
@@ -17,7 +17,7 @@ def retrieve_documents(question: str) -> list[dict[str, str | int | float]]:
         return []
     matches = vector_store.similarity_search_with_score(
         question,
-        k=min(3, vector_store.index.ntotal),
+        k=min(k, vector_store.index.ntotal),
     )
 
     min_score = get_retrieval_min_score()

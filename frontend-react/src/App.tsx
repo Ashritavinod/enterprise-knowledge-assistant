@@ -223,14 +223,10 @@ export default function App() {
     <div className="app">
       <Sidebar
         open={sidebarOpen}
-        conversations={conversations}
-        activeId={activeId}
         documents={documents}
         status={status}
-        onNewChat={newChat}
-        onSelect={select}
-        onDelete={remove}
         onClose={() => setSidebarOpen(false)}
+        chat={{ conversations, activeId, onNewChat: newChat, onSelect: select, onDelete: remove }}
       />
       {sidebarOpen && <div className="scrim" onClick={() => setSidebarOpen(false)} />}
 
