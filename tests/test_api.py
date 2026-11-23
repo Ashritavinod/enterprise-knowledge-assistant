@@ -9,11 +9,14 @@ are skipped when that database is unreachable.
 import logging
 import os
 import unittest
+from unittest import mock
 
 os.environ["DATABASE_URL"] = os.getenv(
     "TEST_DATABASE_URL",
     "postgresql+psycopg://postgres:postgres@localhost:5432/knowledge_assistant_test",
 )
+# Answers must be the top passage here; Azure generation is tested with a fake client.
+os.environ["LLM_PROVIDER"] = "none"
 
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import func, select  # noqa: E402
@@ -120,6 +123,111 @@ class QaApiTests(ApiTestCase):
         with session_scope() as db:
             stored_chunks = db.scalar(select(func.count()).select_from(models.Chunk))
         self.assertEqual(stored_chunks, sum(d["chunk_count"] for d in documents))
+
+
+class AzureAnswerApiTests(ApiTestCase):
+    def test_generated_answer_is_returned_and_stored(self) -> None:
+        conversation_id = self.client.post("/conversations", json={"title": "Azure"}).json()["id"]
+        with (
+            mock.patch("backend.routes.qa.chat_deployment", return_value="gpt-test"),
+            mock.patch(
+                "backend.routes.qa.generate_answer", return_value="Raspberry Swirl is #E8456B [1]."
+            ) as generate,
+        ):
+            body = self.client.post(
+                "/qa/ask",
+                json={
+                    "question": "What is the hex code for Raspberry Swirl?",
+                    "conversation_id": conversation_id,
+                },
+            ).json()
+        self.assertEqual(body["answer"], "Raspberry Swirl is #E8456B [1].")
+        self.assertEqual(body["model"], "gpt-test")
+        self.assertTrue(body["sources"])
+        question, sources, history = generate.call_args.args
+        self.assertEqual(question, "What is the hex code for Raspberry Swirl?")
+        self.assertEqual([s.document for s in sources], [s["document"] for s in body["sources"]])
+        self.assertEqual(history, [])
+        detail = self.client.get(f"/conversations/{conversation_id}").json()
+        self.assertEqual(detail["messages"][1]["text"], body["answer"])
+
+    def test_follow_up_sends_conversation_history(self) -> None:
+        conversation_id = self.client.post("/conversations", json={"title": "History"}).json()["id"]
+        with (
+            mock.patch("backend.routes.qa.chat_deployment", return_value="gpt-test"),
+            mock.patch("backend.routes.qa.generate_answer", side_effect=["First.", "Second."]) as generate,
+            mock.patch(
+                "backend.routes.qa.rewrite_question",
+                return_value="What is the hex code for Raspberry Swirl?",
+            ) as rewrite,
+        ):
+            for question in ("What is the hex code for Honey Gold?", "And Raspberry Swirl?"):
+                self.client.post(
+                    "/qa/ask", json={"question": question, "conversation_id": conversation_id}
+                )
+        history = generate.call_args_list[1].args[2]
+        self.assertEqual(
+            history,
+            [("user", "What is the hex code for Honey Gold?"), ("assistant", "First.")],
+        )
+        # Only the follow-up is rewritten, and retrieval uses the rewritten query.
+        rewrite.assert_called_once_with("And Raspberry Swirl?", history)
+        sources = generate.call_args_list[1].args[1]
+        self.assertIn("#E8456B", " ".join(s.excerpt for s in sources))
+        self.assertEqual(generate.call_args_list[1].args[0], "And Raspberry Swirl?")
+
+    def test_rewrite_error_searches_original_question(self) -> None:
+        conversation_id = self.client.post("/conversations", json={"title": "Rewrite"}).json()["id"]
+        question = "What is the hex code for Raspberry Swirl?"
+        with (
+            mock.patch("backend.routes.qa.chat_deployment", return_value="gpt-test"),
+            mock.patch("backend.routes.qa.generate_answer", return_value="Answer."),
+            mock.patch("backend.routes.qa.rewrite_question", side_effect=RuntimeError("timeout")),
+        ):
+            for _ in range(2):
+                body = self.client.post(
+                    "/qa/ask", json={"question": question, "conversation_id": conversation_id}
+                ).json()
+        self.assertTrue(body["found"])
+        self.assertEqual(body["answer"], "Answer.")
+
+    def test_azure_error_falls_back_to_top_passage(self) -> None:
+        with (
+            mock.patch("backend.routes.qa.chat_deployment", return_value="gpt-test"),
+            mock.patch("backend.routes.qa.generate_answer", side_effect=RuntimeError("429")),
+        ):
+            body = self.client.post(
+                "/qa/ask", json={"question": "What is the hex code for Raspberry Swirl?"}
+            ).json()
+        self.assertTrue(body["found"])
+        self.assertEqual(body["answer"], body["sources"][0]["excerpt"])
+        self.assertIsNone(body["model"])
+
+    def test_unknown_conversation_skips_azure(self) -> None:
+        with (
+            mock.patch("backend.routes.qa.chat_deployment", return_value="gpt-test"),
+            mock.patch("backend.routes.qa.generate_answer") as generate,
+        ):
+            response = self.client.post(
+                "/qa/ask",
+                json={
+                    "question": "What is the hex code for Raspberry Swirl?",
+                    "conversation_id": "00000000-0000-0000-0000-000000000000",
+                },
+            )
+        self.assertEqual(response.status_code, 404)
+        generate.assert_not_called()
+
+    def test_no_passages_skips_azure(self) -> None:
+        with (
+            mock.patch("backend.routes.qa.chat_deployment", return_value="gpt-test"),
+            mock.patch("backend.routes.qa.generate_answer") as generate,
+        ):
+            body = self.client.post(
+                "/qa/ask", json={"question": "What is the capital of France?"}
+            ).json()
+        generate.assert_not_called()
+        self.assertEqual(body["answer"], NO_ANSWER)
 
 
 class ConversationApiTests(ApiTestCase):

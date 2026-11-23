@@ -1,7 +1,9 @@
 """Question-answering endpoints used by the chat frontend."""
 
+import logging
 import re
 import time
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
@@ -17,8 +19,12 @@ from backend.models.schemas import (
     DocumentsResponse,
     Source,
 )
+from backend.services.azure_openai import chat_deployment, generate_answer, rewrite_question
 from backend.services.rag_service import retrieve_documents
 from backend.services.vector_store import get_embedding_model_id
+
+logger = logging.getLogger(__name__)
+HISTORY_MESSAGES = 6
 
 router = APIRouter(prefix="/qa", tags=["question answering"])
 
@@ -47,6 +53,53 @@ def _drop_leading_fragment(text: str) -> str:
         return text
     match = re.search(r"[.!?:]\s+(?=[A-Z0-9•\"“])", text[:160])
     return text[match.end():] if match else text
+
+
+def _history(conversation_id: uuid.UUID | None) -> list[tuple[str, str]]:
+    """The conversation's last few (role, text) turns, oldest first.
+
+    Raises 404 for an unknown conversation, before any Azure OpenAI call is made.
+    """
+    if conversation_id is None:
+        return []
+    with session_scope() as db:
+        if db.get(Conversation, conversation_id) is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
+        rows = db.scalars(
+            select(Message)
+            .where(Message.conversation_id == conversation_id)
+            .order_by(Message.created_at.desc(), Message.id.desc())
+            .limit(HISTORY_MESSAGES)
+        ).all()
+        return [(row.role, row.text) for row in reversed(rows)]
+
+
+def _search_query(question: str, history: list[tuple[str, str]]) -> str:
+    """The question to retrieve with: follow-ups are rewritten to stand alone."""
+    if not history or chat_deployment() is None:
+        return question
+    try:
+        return rewrite_question(question, history)
+    except Exception:
+        logger.exception("Azure OpenAI question rewrite failed; searching the original")
+        return question
+
+
+def _generate(
+    question: str,
+    sources: list[Source],
+    history: list[tuple[str, str]],
+) -> tuple[str, str | None]:
+    """Return (answer, model): an Azure OpenAI answer, or the top passage as fallback."""
+    fallback = sources[0].excerpt if sources else NO_ANSWER
+    if not sources or chat_deployment() is None:
+        return fallback, None
+    try:
+        answer = generate_answer(question, sources, history)
+    except Exception:
+        logger.exception("Azure OpenAI generation failed; returning the top passage")
+        return fallback, None
+    return (answer, chat_deployment()) if answer else (fallback, None)
 
 
 def _record(
@@ -94,7 +147,12 @@ def _record(
 async def ask(request: AskRequest) -> AskResponse:
     started = time.perf_counter()
     question = request.question.strip()
-    results = await run_in_threadpool(retrieve_documents, question) if question else []
+    history: list[tuple[str, str]] = []
+    results: list[dict[str, str | int | float]] = []
+    if question:
+        history = await run_in_threadpool(_history, request.conversation_id)
+        search_query = await run_in_threadpool(_search_query, question, history)
+        results = await run_in_threadpool(retrieve_documents, search_query)
     sources = [
         Source(
             document=str(result["source"]),
@@ -105,13 +163,14 @@ async def ask(request: AskRequest) -> AskResponse:
         )
         for result in results
     ]
-    answer = sources[0].excerpt if sources else NO_ANSWER
+    answer, model = await run_in_threadpool(_generate, question, sources, history)
     response = AskResponse(
         question=question,
         answer=answer,
         found=bool(sources),
         sources=sources,
         conversation_id=request.conversation_id,
+        model=model,
     )
     if question:
         latency_ms = (time.perf_counter() - started) * 1000

@@ -116,18 +116,58 @@ class FastEmbedEmbeddings(Embeddings):
         return _normalize(vector.tolist())
 
 
+class AzureOpenAIEmbeddings(Embeddings):
+    """Embeddings from an Azure OpenAI (Microsoft Foundry) embedding deployment.
+
+    Needs AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY and
+    AZURE_OPENAI_EMBEDDING_DEPLOYMENT (see backend/services/azure_openai.py).
+    """
+
+    # text-embedding-3 cosine scores: related passages ~0.35-0.7, unrelated text
+    # usually below ~0.3. Override with RETRIEVAL_MIN_SCORE if needed.
+    default_min_score = 0.30
+    batch_size = 64
+
+    def __init__(self) -> None:
+        from backend.services.azure_openai import _require, get_client
+
+        self.deployment = _require("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+        self.model_id = f"azure-openai:{self.deployment}"
+        self._client = get_client()
+
+    def _embed(self, texts: list[str]) -> list[list[float]]:
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), self.batch_size):
+            response = self._client.embeddings.create(
+                model=self.deployment, input=texts[start : start + self.batch_size]
+            )
+            ordered = sorted(response.data, key=lambda item: item.index)
+            vectors.extend(_normalize(list(item.embedding)) for item in ordered)
+        return vectors
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self._embed(list(texts))
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embed([text])[0]
+
+
 _embedding_model: Embeddings | None = None
 _vector_store: FAISS | None = None
 
 
 def _create_embedding_model() -> Embeddings:
-    """Pick the embedding backend from EMBEDDING_PROVIDER (auto|fastembed|hash)."""
+    """Pick the embedding backend from EMBEDDING_PROVIDER (auto|fastembed|hash|azure)."""
     provider = os.getenv("EMBEDDING_PROVIDER", "auto").strip().lower()
     if provider == "hash":
         return LocalHashEmbeddings()
+    if provider == "azure":
+        model = AzureOpenAIEmbeddings()
+        logger.info("Using Azure OpenAI embeddings: %s", model.deployment)
+        return model
     if provider not in {"auto", "fastembed"}:
         raise ValueError(
-            f"Unknown EMBEDDING_PROVIDER {provider!r}; use auto, fastembed or hash"
+            f"Unknown EMBEDDING_PROVIDER {provider!r}; use auto, fastembed, hash or azure"
         )
 
     model_name = os.getenv("FASTEMBED_MODEL", DEFAULT_FASTEMBED_MODEL)
