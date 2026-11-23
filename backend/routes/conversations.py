@@ -45,6 +45,9 @@ def create_conversation(body: ConversationCreate, db: Session = Depends(get_db))
     db.flush()
     db.refresh(conversation)
     conversation.messages = []
+    # Commit before responding: get_db's own commit runs after the response is
+    # sent, so a client asking right away could otherwise get a 404.
+    db.commit()
     return conversation
 
 
@@ -56,4 +59,5 @@ def get_conversation(conversation_id: uuid.UUID, db: Session = Depends(get_db)) 
 @router.delete("/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_conversation(conversation_id: uuid.UUID, db: Session = Depends(get_db)) -> Response:
     db.delete(_get_or_404(db, conversation_id))
+    db.commit()  # before responding, as in create_conversation
     return Response(status_code=status.HTTP_204_NO_CONTENT)

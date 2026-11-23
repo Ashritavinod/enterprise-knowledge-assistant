@@ -1,0 +1,14 @@
+# Secrets: settings reach the container through env_file in docker-compose.yml.
+.env
+.env.*
+!.env.example
+
+# Local environments and build output
+venv/
+.venv/
+**/__pycache__/
+frontend-react/
+frontend/
+.git/
+logs/
+data/index/

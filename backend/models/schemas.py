@@ -29,6 +29,10 @@ class AskResponse(BaseModel):
     found: bool
     sources: list[Source]
     conversation_id: uuid.UUID | None = None
+    model: str | None = Field(
+        None,
+        description="Azure OpenAI deployment that wrote the answer; null when the answer is the top passage.",
+    )
 
 
 class DocumentInfo(BaseModel):

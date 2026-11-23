@@ -73,8 +73,14 @@ export function ChatMessage({ message, onRetry }: Props) {
     );
   }
 
-  const sources = message.sources ?? [];
+  const streaming = message.status === "streaming";
+  if (streaming && !message.text) return <TypingIndicator />;
+
+  // Sources appear once the reply is complete, so the text has the stage while it streams.
+  const sources = streaming ? [] : message.sources ?? [];
   const top = sources[0];
+  // Without Azure OpenAI the answer is the top passage itself: label where it came from.
+  const isPassage = top !== undefined && message.text === top.excerpt;
 
   return (
     <div className="msg msg--assistant">
@@ -90,20 +96,22 @@ export function ChatMessage({ message, onRetry }: Props) {
               <p>{message.text}</p>
             </div>
           </div>
-        ) : !message.found ? (
+        ) : !streaming && !message.found ? (
           <div className="notice notice--empty">
             <SearchX size={18} />
             <p>{message.text}</p>
           </div>
         ) : (
           <>
-            {top && (
+            {isPassage && (
               <div className="answer-label" style={{ "--doc": documentColor(top.document) } as CSSProperties}>
                 From <strong>{documentTitle(top.document)}</strong>
                 {top.section && <> · {top.section}</>} · p. {top.page}
               </div>
             )}
-            <RichText text={message.text} />
+            <div className={streaming ? "is-streaming" : undefined}>
+              <RichText text={message.text} />
+            </div>
           </>
         )}
 
@@ -134,7 +142,7 @@ export function ChatMessage({ message, onRetry }: Props) {
 
 export function TypingIndicator() {
   return (
-    <div className="msg msg--assistant" aria-label="MarketMind is searching">
+    <div className="msg msg--assistant" aria-label="MarketMind is thinking">
       <div className="avatar">
         <LogoMark size={32} />
       </div>
@@ -144,7 +152,7 @@ export function TypingIndicator() {
           <span />
           <span />
         </span>
-        Searching marketing documents…
+        Thinking…
       </div>
     </div>
   );
