@@ -90,21 +90,31 @@ build, run `npm run build` and serve `frontend-react/dist/`, setting
 
 The UI calls these endpoints:
 
-- `POST /qa/ask` with `{"question": "...", "conversation_id": "<uuid>"}`
-  returns the best-matching passage as `answer`, plus up to three `sources`
-  (document, page, excerpt, similarity score). `found` is false when nothing
-  clears the relevance threshold. `conversation_id` is optional; when given,
-  the question and answer are saved to that conversation.
+- `POST /qa/ask/stream` with `{"question": "...", "conversation_id": "<uuid>"}`
+  streams the reply as newline-delimited JSON: one `{"type": "sources",
+  "sources": [...]}` event (up to three passages: document, page, section,
+  excerpt, similarity score), then `{"type": "delta", "text": "..."}` events
+  to append as they arrive, then `{"type": "done", "answer", "found", "model",
+  "conversation_id"}`. `conversation_id` is optional; when given, the question
+  and the full answer are saved to that conversation. The chat UI uses this.
+- `POST /qa/ask` takes the same body and returns the whole reply at once as
+  `{"answer", "found", "sources", "model", ...}`.
+- In both, `found` is false only when no answer could be given: no passage
+  cleared the relevance threshold and no chat model replied.
 - `GET /qa/documents` lists the indexed PDFs with page and chunk counts.
 - `GET /conversations`, `POST /conversations` (`{"title": "..."}`),
   `GET /conversations/{id}` (with its messages) and
   `DELETE /conversations/{id}` manage chat history, which is stored in
   PostgreSQL rather than in the browser.
 
-When Azure OpenAI is configured (below), `answer` is written by the chat
-model from the retrieved passages and `model` names the deployment. Otherwise,
-or if the Azure call fails, `answer` is the top retrieved passage and `model`
-is null.
+When Azure OpenAI is configured (below), the assistant works as a chatbot:
+every message gets a reply from the chat model, which `model` names. It
+answers from the retrieved passages with `[n]` citations, replies to greetings
+and thanks, explains what it can help with, rephrases or summarises earlier
+answers, and says when the documents don't cover a question instead of
+guessing. Facts about the company come only from the documents. Without Azure
+OpenAI, or if the call fails, `answer` is the top retrieved passage (or the
+not-found message) and `model` is null.
 
 ### Azure OpenAI (Microsoft Foundry)
 

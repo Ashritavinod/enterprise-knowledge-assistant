@@ -42,8 +42,17 @@ class FakeClient:
 
     def _chat(self, **kwargs):
         self.chat_calls.append(kwargs)
+        if kwargs.get("stream"):
+            return self._stream()
         message = SimpleNamespace(content=self.answer)
         return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    def _stream(self):
+        # Azure starts with a chunk that has no choices (content-filter results)
+        # and may send empty deltas.
+        yield SimpleNamespace(choices=[])
+        for piece in [self.answer[: len(self.answer) // 2], None, self.answer[len(self.answer) // 2 :]]:
+            yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=piece))])
 
     def _embed(self, **kwargs):
         self.embedding_calls.append(kwargs)
@@ -108,16 +117,41 @@ class GenerateAnswerTests(unittest.TestCase):
         prompt = call["messages"][-1]["content"]
         self.assertIn("[1] Doc1.pdf, page 1, section: Section 1\nExcerpt 1.", prompt)
         self.assertIn("[2] Doc2.pdf, page 2", prompt)
-        self.assertTrue(prompt.endswith("Question: What colour?"))
+        self.assertTrue(prompt.endswith("Message: What colour?"))
 
-    def test_returns_none_without_sources_or_config(self) -> None:
+    def test_asks_model_even_without_passages(self) -> None:
+        # Greetings and follow-ups about earlier answers match no passages but
+        # still need a reply.
+        client = FakeClient("Hi! Ask me about Honeycrumb's marketing.")
+        with (
+            mock.patch.dict(os.environ, CONFIGURED),
+            mock.patch.object(azure_openai, "get_client", return_value=client),
+        ):
+            answer = azure_openai.generate_answer("Hello!", [])
+        self.assertEqual(answer, "Hi! Ask me about Honeycrumb's marketing.")
+        prompt = client.chat_calls[0]["messages"][-1]["content"]
+        self.assertIn("(No passages matched this message.)", prompt)
+
+    def test_returns_none_when_not_configured(self) -> None:
         client = FakeClient()
-        with mock.patch.object(azure_openai, "get_client", return_value=client):
-            with mock.patch.dict(os.environ, CONFIGURED):
-                self.assertIsNone(azure_openai.generate_answer("Q?", []))
-            with mock.patch.dict(os.environ, UNSET):
-                self.assertIsNone(azure_openai.generate_answer("Q?", [_source(1)]))
+        with (
+            mock.patch.dict(os.environ, UNSET),
+            mock.patch.object(azure_openai, "get_client", return_value=client),
+        ):
+            self.assertIsNone(azure_openai.generate_answer("Q?", [_source(1)]))
+            self.assertEqual(list(azure_openai.stream_answer("Q?", [_source(1)])), [])
         self.assertEqual(client.chat_calls, [])
+
+    def test_stream_yields_text_pieces(self) -> None:
+        client = FakeClient("Raspberry Swirl is #E8456B [1].")
+        with (
+            mock.patch.dict(os.environ, CONFIGURED),
+            mock.patch.object(azure_openai, "get_client", return_value=client),
+        ):
+            pieces = list(azure_openai.stream_answer("Which colour?", [_source(1)]))
+        self.assertEqual(len(pieces), 2)
+        self.assertEqual("".join(pieces), "Raspberry Swirl is #E8456B [1].")
+        self.assertTrue(client.chat_calls[0]["stream"])
 
     def test_blank_completion_returns_none(self) -> None:
         with (

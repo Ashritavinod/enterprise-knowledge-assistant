@@ -12,7 +12,21 @@ export interface AskResponse {
   found: boolean;
   sources: Source[];
   conversation_id?: string | null;
+  /** Azure OpenAI deployment that wrote the answer; null when it is the top passage. */
+  model?: string | null;
 }
+
+/** One line of the /qa/ask/stream response. */
+export type StreamEvent =
+  | { type: "sources"; sources: Source[] }
+  | { type: "delta"; text: string }
+  | {
+      type: "done";
+      answer: string;
+      found: boolean;
+      model: string | null;
+      conversation_id: string | null;
+    };
 
 export interface DocumentInfo {
   name: string;
@@ -25,7 +39,8 @@ export type Message =
       id: string;
       role: "assistant";
       createdAt: number;
-      status: "done" | "error";
+      /** "streaming" while the reply is still being written. */
+      status: "streaming" | "done" | "error";
       text: string;
       found?: boolean;
       sources?: Source[];

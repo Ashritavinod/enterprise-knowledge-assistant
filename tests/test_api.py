@@ -6,6 +6,7 @@ recreated, so never point it at a database whose data you need. The API tests
 are skipped when that database is unreachable.
 """
 
+import json
 import logging
 import os
 import unittest
@@ -218,16 +219,113 @@ class AzureAnswerApiTests(ApiTestCase):
         self.assertEqual(response.status_code, 404)
         generate.assert_not_called()
 
-    def test_no_passages_skips_azure(self) -> None:
+    def test_no_passages_still_gets_a_chat_reply(self) -> None:
+        reply = "Hello! I can help with Honeycrumb's brand, campaigns and more."
         with (
             mock.patch("backend.routes.qa.chat_deployment", return_value="gpt-test"),
-            mock.patch("backend.routes.qa.generate_answer") as generate,
+            mock.patch("backend.routes.qa.generate_answer", return_value=reply) as generate,
         ):
-            body = self.client.post(
-                "/qa/ask", json={"question": "What is the capital of France?"}
-            ).json()
-        generate.assert_not_called()
-        self.assertEqual(body["answer"], NO_ANSWER)
+            body = self.client.post("/qa/ask", json={"question": "Hello!"}).json()
+        self.assertEqual(generate.call_args.args[1], [])
+        self.assertEqual(body["answer"], reply)
+        self.assertEqual(body["sources"], [])
+        self.assertTrue(body["found"])  # answered, so the UI shows a normal reply
+        with session_scope() as db:
+            log = db.scalar(
+                select(models.QueryLog)
+                .where(models.QueryLog.question == "Hello!")
+                .order_by(models.QueryLog.id.desc())
+            )
+            assert log is not None
+            self.assertFalse(log.found)  # the query log still records the retrieval miss
+
+
+def _events(response) -> list[dict]:
+    return [json.loads(line) for line in response.text.splitlines() if line.strip()]
+
+
+class StreamApiTests(ApiTestCase):
+    def test_streams_sources_deltas_and_done(self) -> None:
+        conversation_id = self.client.post("/conversations", json={"title": "Stream"}).json()["id"]
+        with (
+            mock.patch("backend.routes.qa.chat_deployment", return_value="gpt-test"),
+            mock.patch(
+                "backend.routes.qa.stream_answer", return_value=iter(["Raspberry Swirl ", "is #E8456B [1]."])
+            ),
+        ):
+            response = self.client.post(
+                "/qa/ask/stream",
+                json={
+                    "question": "What is the hex code for Raspberry Swirl?",
+                    "conversation_id": conversation_id,
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.headers["content-type"].startswith("application/x-ndjson"))
+        events = _events(response)
+        self.assertEqual([e["type"] for e in events], ["sources", "delta", "delta", "done"])
+        self.assertIn("#E8456B", " ".join(s["excerpt"] for s in events[0]["sources"]))
+        done = events[-1]
+        self.assertEqual(done["answer"], "Raspberry Swirl is #E8456B [1].")
+        self.assertEqual(done["model"], "gpt-test")
+        self.assertTrue(done["found"])
+        messages = self.client.get(f"/conversations/{conversation_id}").json()["messages"]
+        self.assertEqual([m["text"] for m in messages], [
+            "What is the hex code for Raspberry Swirl?",
+            "Raspberry Swirl is #E8456B [1].",
+        ])
+        self.assertEqual(messages[1]["sources"], events[0]["sources"])
+
+    def test_without_azure_streams_the_top_passage(self) -> None:
+        events = _events(
+            self.client.post(
+                "/qa/ask/stream", json={"question": "What is the hex code for Raspberry Swirl?"}
+            )
+        )
+        self.assertEqual([e["type"] for e in events], ["sources", "delta", "done"])
+        self.assertEqual(events[1]["text"], events[0]["sources"][0]["excerpt"])
+        self.assertIsNone(events[-1]["model"])
+
+    def test_azure_failure_before_any_text_falls_back(self) -> None:
+        def failing(*_args):
+            raise RuntimeError("429")
+            yield  # pragma: no cover - makes this a generator
+
+        with (
+            mock.patch("backend.routes.qa.chat_deployment", return_value="gpt-test"),
+            mock.patch("backend.routes.qa.stream_answer", side_effect=failing),
+        ):
+            events = _events(
+                self.client.post("/qa/ask/stream", json={"question": "What is the capital of France?"})
+            )
+        self.assertEqual(events[-1]["answer"], NO_ANSWER)
+        self.assertIsNone(events[-1]["model"])
+        self.assertFalse(events[-1]["found"])
+
+    def test_azure_failure_mid_answer_keeps_text_and_notes_it(self) -> None:
+        def partial(*_args):
+            yield "Raspberry Swirl is"
+            raise RuntimeError("connection reset")
+
+        with (
+            mock.patch("backend.routes.qa.chat_deployment", return_value="gpt-test"),
+            mock.patch("backend.routes.qa.stream_answer", side_effect=partial),
+        ):
+            events = _events(
+                self.client.post(
+                    "/qa/ask/stream", json={"question": "What is the hex code for Raspberry Swirl?"}
+                )
+            )
+        self.assertTrue(events[-1]["answer"].startswith("Raspberry Swirl is"))
+        self.assertIn("cut off", events[-1]["answer"])
+        self.assertEqual(events[-1]["model"], "gpt-test")
+
+    def test_unknown_conversation_is_404_before_streaming(self) -> None:
+        response = self.client.post(
+            "/qa/ask/stream",
+            json={"question": "Hi", "conversation_id": "00000000-0000-0000-0000-000000000000"},
+        )
+        self.assertEqual(response.status_code, 404)
 
 
 class ConversationApiTests(ApiTestCase):

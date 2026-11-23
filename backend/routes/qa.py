@@ -1,12 +1,16 @@
 """Question-answering endpoints used by the chat frontend."""
 
+import json
 import logging
 import re
 import time
 import uuid
+from collections.abc import Iterator
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -19,7 +23,12 @@ from backend.models.schemas import (
     DocumentsResponse,
     Source,
 )
-from backend.services.azure_openai import chat_deployment, generate_answer, rewrite_question
+from backend.services.azure_openai import (
+    chat_deployment,
+    generate_answer,
+    rewrite_question,
+    stream_answer,
+)
 from backend.services.rag_service import retrieve_documents
 from backend.services.vector_store import get_embedding_model_id
 
@@ -85,21 +94,54 @@ def _search_query(question: str, history: list[tuple[str, str]]) -> str:
         return question
 
 
+def _fallback(sources: list[Source]) -> str:
+    """Answer used without Azure OpenAI: the top passage, or the not-found message."""
+    return sources[0].excerpt if sources else NO_ANSWER
+
+
 def _generate(
     question: str,
     sources: list[Source],
     history: list[tuple[str, str]],
 ) -> tuple[str, str | None]:
-    """Return (answer, model): an Azure OpenAI answer, or the top passage as fallback."""
-    fallback = sources[0].excerpt if sources else NO_ANSWER
-    if not sources or chat_deployment() is None:
-        return fallback, None
+    """Return (answer, model): an Azure OpenAI chat reply, or the fallback answer.
+
+    The model is asked even when no passages matched, so greetings, thanks,
+    off-topic questions and requests about earlier answers get a real reply.
+    """
+    if chat_deployment() is None:
+        return _fallback(sources), None
     try:
         answer = generate_answer(question, sources, history)
     except Exception:
-        logger.exception("Azure OpenAI generation failed; returning the top passage")
-        return fallback, None
-    return (answer, chat_deployment()) if answer else (fallback, None)
+        logger.exception("Azure OpenAI generation failed; returning the fallback answer")
+        return _fallback(sources), None
+    return (answer, chat_deployment()) if answer else (_fallback(sources), None)
+
+
+def _to_sources(results: list[dict[str, str | int | float]]) -> list[Source]:
+    return [
+        Source(
+            document=str(result["source"]),
+            page=int(result["page"]) + 1,
+            section=str(result.get("section", "")),
+            excerpt=clean_excerpt(str(result["content"]), str(result.get("section", ""))),
+            score=round(float(result["score"]), 4),
+        )
+        for result in results
+    ]
+
+
+async def _prepare(question: str, conversation_id: uuid.UUID | None) -> tuple[
+    list[tuple[str, str]], list[Source]
+]:
+    """Load history (404 for an unknown conversation), rewrite follow-ups, retrieve."""
+    if not question:
+        return [], []
+    history = await run_in_threadpool(_history, conversation_id)
+    search_query = await run_in_threadpool(_search_query, question, history)
+    results = await run_in_threadpool(retrieve_documents, search_query)
+    return history, _to_sources(results)
 
 
 def _record(
@@ -132,7 +174,9 @@ def _record(
         db.add(
             QueryLog(
                 question=response.question,
-                found=response.found,
+                # Whether retrieval matched; `response.found` is also true for
+                # model replies to greetings and other messages without passages.
+                found=bool(response.sources),
                 result_count=len(response.sources),
                 top_score=top.score if top else None,
                 top_document=top.document if top else None,
@@ -147,27 +191,15 @@ def _record(
 async def ask(request: AskRequest) -> AskResponse:
     started = time.perf_counter()
     question = request.question.strip()
-    history: list[tuple[str, str]] = []
-    results: list[dict[str, str | int | float]] = []
+    history, sources = await _prepare(question, request.conversation_id)
     if question:
-        history = await run_in_threadpool(_history, request.conversation_id)
-        search_query = await run_in_threadpool(_search_query, question, history)
-        results = await run_in_threadpool(retrieve_documents, search_query)
-    sources = [
-        Source(
-            document=str(result["source"]),
-            page=int(result["page"]) + 1,
-            section=str(result.get("section", "")),
-            excerpt=clean_excerpt(str(result["content"]), str(result.get("section", ""))),
-            score=round(float(result["score"]), 4),
-        )
-        for result in results
-    ]
-    answer, model = await run_in_threadpool(_generate, question, sources, history)
+        answer, model = await run_in_threadpool(_generate, question, sources, history)
+    else:
+        answer, model = NO_ANSWER, None
     response = AskResponse(
         question=question,
         answer=answer,
-        found=bool(sources),
+        found=bool(sources) or model is not None,
         sources=sources,
         conversation_id=request.conversation_id,
         model=model,
@@ -176,6 +208,78 @@ async def ask(request: AskRequest) -> AskResponse:
         latency_ms = (time.perf_counter() - started) * 1000
         await run_in_threadpool(_record, request, response, latency_ms)
     return response
+
+
+def _event(payload: dict[str, Any]) -> bytes:
+    return (json.dumps(payload, default=str) + "\n").encode("utf-8")
+
+
+@router.post("/ask/stream")
+async def ask_stream(request: AskRequest) -> StreamingResponse:
+    """Like /qa/ask, but streams the reply as newline-delimited JSON events.
+
+    Events, in order:
+      {"type": "sources", "sources": [...]}
+      {"type": "delta", "text": "..."}  (zero or more; concatenate them)
+      {"type": "done", "answer": "...", "found": bool, "model": str | null,
+       "conversation_id": str | null}
+    Errors before streaming starts (e.g. unknown conversation: 404) are normal
+    HTTP errors. If Azure OpenAI fails before writing anything, the fallback
+    answer is sent as a single delta.
+    """
+    started = time.perf_counter()
+    question = request.question.strip()
+    history, sources = await _prepare(question, request.conversation_id)
+
+    def events() -> Iterator[bytes]:
+        yield _event({"type": "sources", "sources": [s.model_dump() for s in sources]})
+        parts: list[str] = []
+        model = chat_deployment() if question else None
+        if model is not None:
+            try:
+                for piece in stream_answer(question, sources, history):
+                    parts.append(piece)
+                    yield _event({"type": "delta", "text": piece})
+            except Exception:
+                logger.exception("Azure OpenAI streaming failed")
+                if parts:
+                    note = "\n\n(The answer was cut off. Please retry.)"
+                    parts.append(note)
+                    yield _event({"type": "delta", "text": note})
+        if not "".join(parts).strip():
+            model = None
+            parts = [_fallback(sources) if question else NO_ANSWER]
+            yield _event({"type": "delta", "text": parts[0]})
+
+        response = AskResponse(
+            question=question,
+            answer="".join(parts).strip(),
+            found=bool(sources) or model is not None,
+            sources=sources,
+            conversation_id=request.conversation_id,
+            model=model,
+        )
+        if question:
+            try:
+                _record(request, response, (time.perf_counter() - started) * 1000)
+            except Exception:  # e.g. the conversation was deleted mid-stream
+                logger.exception("Could not save the streamed answer")
+        yield _event(
+            {
+                "type": "done",
+                "answer": response.answer,
+                "found": response.found,
+                "model": response.model,
+                "conversation_id": response.conversation_id,
+            }
+        )
+
+    return StreamingResponse(
+        events(),
+        media_type="application/x-ndjson",
+        # Ask proxies (nginx, Vite) not to buffer, so text appears as it is written.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/documents", response_model=DocumentsResponse)

@@ -230,6 +230,32 @@ button:disabled { cursor: not-allowed; }
   border-radius: 2px; background: var(--brand-gradient); transform: rotate(45deg);
 }
 .qa-label { color: var(--violet); }
+.rich-text ul:last-child, .rich-text ol:last-child { margin-bottom: 0; }
+/* Numbered lists from chat replies */
+.rich-text ol { margin: 6px 0 10px; padding: 0; list-style: none; counter-reset: step; display: flex; flex-direction: column; gap: 6px; }
+.rich-text ol > li { counter-increment: step; padding-left: 26px; }
+.rich-text ol > li::before {
+  content: counter(step); left: 0; top: 0.15em; width: 18px; height: 18px; transform: none;
+  display: grid; place-items: center; border-radius: 6px; background: var(--cloud);
+  font-size: 11px; font-weight: 700; color: var(--muted);
+}
+.rich-text strong { color: var(--indigo); font-weight: 700; }
+.rich-text code { font-size: 0.9em; padding: 1px 5px; border-radius: 5px; background: var(--cloud); }
+.rich-text .md-heading { margin-top: 4px; }
+/* [1]-style citations; the number matches the numbered source cards below */
+.cite {
+  display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 4px;
+  margin: 0 1px; border-radius: 5px; background: var(--cloud); color: var(--muted);
+  font-size: 10.5px; font-weight: 700; line-height: 1; vertical-align: 0.15em;
+}
+/* Blinking cursor at the end of a reply that is still streaming */
+.is-streaming .rich-text > p:last-child::after,
+.is-streaming .rich-text > ul:last-child > li:last-child::after,
+.is-streaming .rich-text > ol:last-child > li:last-child::after {
+  content: ""; display: inline-block; width: 7px; height: 1.05em; margin-left: 3px;
+  vertical-align: -0.15em; border-radius: 2px; background: var(--violet);
+  animation: pulse 1s infinite steps(1);
+}
 .table-wrap { margin: 8px 0 12px; overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
 .rich-text table { width: 100%; border-collapse: collapse; font-size: 13.5px; line-height: 1.45; }
 .rich-text td { padding: 7px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
