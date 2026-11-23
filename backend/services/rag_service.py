@@ -35,6 +35,7 @@ def retrieve_documents(question: str) -> list[dict[str, str | int | float]]:
             "content": document.page_content,
             "source": Path(str(source)).name if source else "Unknown",
             "page": document.metadata.get("page", 0),
+            "section": str(document.metadata.get("section", "")),
             "score": float(similarity),
         }
         results.append(result)

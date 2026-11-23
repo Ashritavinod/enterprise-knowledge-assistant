@@ -8,7 +8,10 @@
   question-answering route.
 - **Services** (`backend/services/`): PDF loading, retrieval/vector-store, and
   retrieval-augmented generation logic.
-- **Data** (`data/`): policy PDFs and locally generated indexes.
+- **Database** (`backend/db/`): SQLAlchemy models and the PostgreSQL
+  connection. PostgreSQL stores the indexed documents and chunks, chat
+  history, and a log of every question asked. FAISS still does vector search.
+- **Data** (`data/`): policy PDFs and the local FAISS index.
 
 ## Intended request flow
 
@@ -26,5 +29,5 @@ not yet implemented.
 
 ## Technologies
 
-Python, Streamlit, FastAPI, LangChain, FAISS, PyMuPDF, and an OpenAI-compatible
+Python, Streamlit, React, FastAPI, PostgreSQL (SQLAlchemy + psycopg), LangChain, FAISS, PyMuPDF, and an OpenAI-compatible
 language model integration are listed or represented in the starter project.

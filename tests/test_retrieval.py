@@ -21,36 +21,45 @@ logging.disable(logging.CRITICAL)
 
 # (question, substring of the answer that must appear in a top-3 chunk)
 LEXICAL_CASES = [
-    ("What is the hex code for Pulse Coral?", "#FF6B5A"),
-    ("What is our primary brand color?", "Aurelis Indigo"),
+    ("What is the hex code for Raspberry Swirl?", "#E8456B"),
+    ("Which color is primary in our palette?", "Honey Gold"),
     ("How many hashtags can I use in a social post?", "three hashtags"),
-    ("What's the max subject line length for emails?", "50 characters"),
-    ("How is the 2026 marketing budget allocated?", "28%"),
-    ("What is the MQL target for 2026?", "18,000"),
-    ("Who handles legal review of competitive claims?", "Samuel Grant"),
-    ("How far before launch is a Tier 3 campaign brief due?", "8 weeks"),
+    ("What's the max subject line length for emails?", "45 characters"),
+    ("How is the 2026 marketing budget allocated?", "26%"),
+    ("What is the Crumb Club membership target for 2026?", "600,000"),
+    ("Who reviews allergen claims?", "Arun Mehta"),
+    ("How often do we post on Instagram and TikTok?", "four TikToks"),
     ("What is the approval SLA for Tier 1 content?", "1 business day"),
-    ("Minimum sample size for an A/B test?", "1,000"),
-    ("When does Pulse Copilot become generally available?", "April 14, 2026"),
-    ("Can we offer a 20% discount in a campaign email?", "15%"),
-    ("How much did Brightwater Financial reduce churn?", "23%"),
-    ("Give me the 30-second elevator pitch", "30-second"),
-    ("When is the post-campaign report due?", "10 business days"),
-    ("Who owns web and SEO standards?", "Aisha Bello"),
-    ("which fonts are approved?", "Inter"),
-    ("revenue growth goal this year", "$240M"),
+    ("Minimum sample size for an A/B test?", "2,000"),
+    ("What date does Summer Scoops launch?", "June 15, 2026"),
+    ("Can we offer 30% off in a campaign?", "25%"),
+    ("How much does an 8-inch celebration cake cost?", "$54"),
+    ("When is the post-campaign report due?", "7 business days"),
+    ("Who are the Tier 2 approvers?", "Theo Marchetti"),
+    ("which fonts are approved?", "Fraunces"),
+    ("revenue growth goal this year", "$182M"),
+    ("What is our tagline?", "sweeter by the crumb"),
+    ("How many honey butter croissants did we sell last year?", "2.1 million"),
+    ("What can we label as gluten-free?", "20 ppm"),
 ]
 
 # Paraphrased questions with little word overlap; need semantic embeddings.
 SEMANTIC_CASES = [
-    ("What are the Starter and Growth list prices?", "$1,200"),
-    ("Who are our main competitors?", "InsightHive"),
-    ("What time of day should marketing emails be sent?", "9:00"),
-    ("How fast must we reply to people mentioning us on twitter?", "four business hours"),
+    ("How fast must we reply to people commenting on instagram?", "two hours"),
+    ("What perks do loyalty members get?", "birthday"),
+    ("How big a cake do I need for 20 people?", "10-inch"),
+    ("Can influencers get free stuff?", "$150"),
+    ("What words are we not allowed to use?", "guilt-free"),
+    # These used to miss when chunks were cut every 500 characters.
+    ("Who are our main competitors?", "Sweetwell"),
+    ("Give me the 30-second elevator pitch", "30-second pitch"),
+    ("What time of day should marketing emails go out?", "10:00"),
+    ("Where are we opening new stores this year?", "Denver"),
 ]
 SEMANTIC_OFF_TOPIC = [
     "How many vacation days do employees get?",
     "What is the travel reimbursement policy for airfare?",
+    "How do I reset my laptop password?",
 ]
 
 _original_paths: dict[str, Path] = {}
@@ -118,6 +127,63 @@ class PdfExtractionTests(unittest.TestCase):
             self.assertIn("source", chunk.metadata)
             self.assertIn("page", chunk.metadata)
             self.assertLessEqual(len(chunk.page_content), vector_store.CHUNK_SIZE)
+            self.assertIn("section", chunk.metadata)
+
+    def test_loader_marks_headings_and_table_rows(self) -> None:
+        text = "\n\n".join(d.page_content for d in self.documents)
+        self.assertIn("## 7. Color Palette", text)
+        self.assertIn("### Social media", text)
+        self.assertIn("Paid social | 26% | $3.07M", text)
+        self.assertNotIn("Page 1 of", text)  # running footers are dropped
+
+
+def _page(text: str, page: int, source: str = "Guide.pdf") -> Document:
+    return Document(page_content=text, metadata={"source": source, "page": page})
+
+
+class StructuredChunkingTests(unittest.TestCase):
+    def test_chunks_start_with_their_section_and_never_cross_headings(self) -> None:
+        chunks = vector_store.split_documents([
+            _page("# Guide\n\n## 1. Logo\n\nUse the logo.\n\n## 2. Colors\n\n### Primary\n\nGold.", 0),
+        ])
+        self.assertEqual(
+            [(c.metadata["section"], c.page_content) for c in chunks],
+            [
+                ("1. Logo", "1. Logo\nUse the logo."),
+                ("2. Colors › Primary", "2. Colors › Primary\nGold."),
+            ],
+        )
+
+    def test_faq_entries_are_their_own_chunks(self) -> None:
+        chunks = vector_store.split_documents([
+            _page("## FAQ\n\nQ: One? A: First.\n\nQ: Two? A: Second.", 0),
+        ])
+        self.assertEqual([c.page_content for c in chunks],
+                         ["FAQ\nQ: One? A: First.", "FAQ\nQ: Two? A: Second."])
+
+    def test_paragraph_split_by_page_break_is_rejoined(self) -> None:
+        chunks = vector_store.split_documents([
+            _page("## Goals\n\nQ: Target? A: Grow from 410,000 members to", 0),
+            _page("600,000 members.\n\n## Next\n\nMore.", 1),
+        ])
+        self.assertEqual(chunks[0].page_content, "Goals\nQ: Target? A: Grow from 410,000 members to 600,000 members.")
+        self.assertEqual(chunks[0].metadata["page"], 0)
+        self.assertEqual(chunks[1].metadata["page"], 1)
+
+    def test_pages_from_different_files_are_not_joined(self) -> None:
+        chunks = vector_store.split_documents([
+            _page("Ends without a period", 0, "A.pdf"),
+            _page("starts a new file.", 0, "B.pdf"),
+        ])
+        self.assertEqual(len(chunks), 2)
+
+    def test_long_paragraphs_are_split_within_the_size_limit(self) -> None:
+        sentence = "Every campaign needs a brief with a goal and a budget. "
+        chunks = vector_store.split_documents([_page("## Rules\n\n" + sentence * 40, 0)])
+        self.assertGreater(len(chunks), 1)
+        for chunk in chunks:
+            self.assertTrue(chunk.page_content.startswith("Rules\n"))
+            self.assertLessEqual(len(chunk.page_content), vector_store.CHUNK_SIZE)
 
 
 class RetrievalTests(unittest.TestCase):
@@ -138,7 +204,7 @@ class RetrievalTests(unittest.TestCase):
         self.assertTrue(1 <= len(results) <= 3)
         min_score = vector_store.get_retrieval_min_score()
         for result in results:
-            self.assertEqual(set(result), {"content", "source", "page", "score"})
+            self.assertEqual(set(result), {"content", "source", "page", "section", "score"})
             self.assertTrue(str(result["source"]).endswith(".pdf"))
             self.assertGreaterEqual(result["score"], min_score)
 

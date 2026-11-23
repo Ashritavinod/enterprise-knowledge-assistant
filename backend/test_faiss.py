@@ -5,11 +5,11 @@ import logging
 from services.rag_service import retrieve_documents
 
 QUESTIONS = (
-    ("What is the hex code for Pulse Coral?", "BrandGuidelines.pdf"),
+    ("What is the hex code for Raspberry Swirl?", "BrandGuidelines.pdf"),
     ("How is the 2026 marketing budget allocated?", "MarketingStrategy2026.pdf"),
-    ("Who approves Tier 3 campaigns?", "CampaignPlaybook.pdf"),
-    ("What is the 30-second elevator pitch for Aurelis Pulse?", "ProductMarketingGuide.pdf"),
-    ("What tone of voice should be used in LinkedIn campaigns?", "MarketingFAQ.pdf"),
+    ("Who approves Tier 2 campaigns?", "CampaignPlaybook.pdf"),
+    ("How much does an 8-inch celebration cake cost?", "ProductMarketingGuide.pdf"),
+    ("What do Crumb Club members get?", "MarketingFAQ.pdf"),
 )
 
 

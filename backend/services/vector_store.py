@@ -22,8 +22,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 INDEX_DIRECTORY = PROJECT_ROOT / "data" / "index"
 INDEX_FILE = INDEX_DIRECTORY / "index.faiss"
 DOCUMENTS_FILE = INDEX_DIRECTORY / "documents.json"
-INDEX_FORMAT_VERSION = 2
-CHUNK_SIZE = 500
+INDEX_FORMAT_VERSION = 3
+CHUNK_SIZE = 700
 CHUNK_OVERLAP = 50
 DEFAULT_FASTEMBED_MODEL = "BAAI/bge-small-en-v1.5"
 
@@ -320,13 +320,161 @@ def get_vector_store() -> FAISS:
     return initialize_vector_store(chunks)
 
 
+_QA_PARAGRAPH = re.compile(r"^Q\s*[:.]")
+_STRUCTURAL = re.compile(r"^(#{1,3} |• |Q\s*[:.])")
+
+
+def _continues(previous: str, paragraph: str) -> bool:
+    """True when `paragraph` is the rest of `previous`, split by a page break."""
+    if previous.startswith("#") or " | " in previous or " | " in paragraph:
+        return False
+    if previous.rstrip().endswith((".", "!", "?", ":", '"', "”")):
+        return False
+    return not _STRUCTURAL.match(paragraph)
+
+
+class _SectionChunker:
+    """Pack whole paragraphs into chunks that never cross a section heading.
+
+    Every chunk starts with a one-line section path ("2. Goals › Paid media")
+    so the heading's words are embedded with the text under it. FAQ-style
+    "Q: ... A: ..." paragraphs always become their own chunk, so a question is
+    never separated from its answer.
+    """
+
+    def __init__(self, chunk_size: int, chunk_overlap: int) -> None:
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self.chunks: list[Document] = []
+        self._source = ""
+        self._title = ""
+        self._h2 = ""
+        self._h3 = ""
+        self._paragraphs: list[str] = []
+        self._page: Any = None
+        self._metadata: dict[str, Any] = {}
+
+    def section(self) -> str:
+        if self._h2:
+            return " › ".join(part for part in (self._h2, self._h3) if part)
+        return self._title
+
+    def start_source(self, source: str, fallback_title: str) -> None:
+        self.flush()
+        self._source = source
+        self._title = fallback_title
+        self._h2 = self._h3 = ""
+
+    def add_paragraph(self, paragraph: str, page: Any, metadata: dict[str, Any]) -> None:
+        self._metadata = metadata
+        if paragraph.startswith("# "):
+            self.flush()
+            self._title = paragraph[2:].strip()
+        elif paragraph.startswith("## "):
+            self.flush()
+            self._h2, self._h3 = paragraph[3:].strip(), ""
+        elif paragraph.startswith("### "):
+            self.flush()
+            self._h3 = paragraph[4:].strip()
+        elif _QA_PARAGRAPH.match(paragraph):
+            self.flush()
+            self._add(paragraph, page)
+            self.flush()
+        else:
+            self._add(paragraph, page)
+
+    def _header(self) -> str:
+        section = self.section()
+        return f"{section}\n" if section else ""
+
+    def _add(self, paragraph: str, page: Any) -> None:
+        budget = self.chunk_size - len(self._header())
+        if len(paragraph) > budget:
+            self.flush()
+            splitter = RecursiveCharacterTextSplitter(
+                chunk_size=max(budget, 100),
+                chunk_overlap=self.chunk_overlap,
+                separators=["\n", ". ", "; ", ", ", " ", ""],
+                keep_separator="end",
+            )
+            for piece in splitter.split_text(paragraph):
+                self._paragraphs, self._page = [piece.strip()], page
+                self.flush()
+            return
+        current = sum(len(p) + 1 for p in self._paragraphs)
+        if self._paragraphs and current + len(paragraph) > budget:
+            self.flush()
+        if not self._paragraphs:
+            self._page = page
+        self._paragraphs.append(paragraph)
+
+    def flush(self) -> None:
+        if not self._paragraphs:
+            return
+        metadata = {
+            key: value
+            for key, value in self._metadata.items()
+            if key in {"source", "page_number", "total_pages"}
+        }
+        metadata.update(
+            source=self._source or metadata.get("source", ""),
+            page=self._page if self._page is not None else 0,
+            page_number=(self._page if isinstance(self._page, int) else 0) + 1,
+            section=self.section(),
+        )
+        self.chunks.append(
+            Document(
+                page_content=self._header() + "\n".join(self._paragraphs),
+                metadata=metadata,
+            )
+        )
+        self._paragraphs = []
+        self._page = None
+
+
 def split_documents(documents: list[Document]) -> list[Document]:
-    """Split loaded documents into overlapping chunks while retaining metadata."""
+    """Split page documents into section-aware chunks that keep their metadata.
+
+    Pages should carry the structure markers produced by
+    pdf_loader.extract_structured_pages ("#"/"##"/"###" headings, blank lines
+    between paragraphs). Plain text without markers is still split on blank
+    lines and, when needed, sentence boundaries.
+    """
     logger.info("Documents received: %d", len(documents))
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP
-    )
-    chunks = splitter.split_documents(documents)
+    chunker = _SectionChunker(CHUNK_SIZE, CHUNK_OVERLAP)
+    current_source: object = None
+    # The last paragraph of each page is held back in case the next page of the
+    # same PDF continues it (a paragraph cut by a page break).
+    carry: tuple[str, Any] | None = None
+    metadata: dict[str, Any] = {}
+    for document in documents:
+        source = document.metadata.get("source", "")
+        if source != current_source:
+            if carry:
+                chunker.add_paragraph(*carry, metadata)
+                carry = None
+            current_source = source
+            stem = Path(str(source)).stem if source else ""
+            chunker.start_source(str(source), re.sub(r"(?<=[a-z])(?=[A-Z0-9])", " ", stem))
+        metadata = dict(document.metadata)
+        page = metadata.get("page")
+        items = [
+            (paragraph.strip(), page)
+            for paragraph in document.page_content.split("\n\n")
+            if paragraph.strip()
+        ]
+        if carry:
+            if items and _continues(carry[0], items[0][0]):
+                items[0] = (f"{carry[0]} {items[0][0]}", carry[1])
+            else:
+                items.insert(0, carry)
+        carry = items.pop() if items else None
+        for paragraph, paragraph_page in items:
+            chunker.add_paragraph(paragraph, paragraph_page, metadata)
+    if carry:
+        chunker.add_paragraph(*carry, metadata)
+    chunker.flush()
+    chunks = chunker.chunks
 
     average_chunk_length = (
         sum(len(chunk.page_content) for chunk in chunks) / len(chunks) if chunks else 0

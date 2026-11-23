@@ -17,6 +17,47 @@ python -m pip install -r requirements.txt
 If PowerShell blocks activation, use `venv\Scripts\python.exe` instead of
 activating the environment.
 
+## PostgreSQL
+
+The API requires PostgreSQL (tested with 16) and won't start without it.
+Create the databases once, entering the `postgres` user's password when
+prompted:
+
+```powershell
+& "C:\Program Files\PostgreSQL\16\bin\createdb.exe" -U postgres knowledge_assistant
+& "C:\Program Files\PostgreSQL\16\bin\createdb.exe" -U postgres knowledge_assistant_test
+```
+
+Then set the connection string in `.env` (see `.env.example`):
+
+```
+DATABASE_URL=postgresql+psycopg://postgres:<password>@localhost:5432/knowledge_assistant
+TEST_DATABASE_URL=postgresql+psycopg://postgres:<password>@localhost:5432/knowledge_assistant_test
+```
+
+Alternatively, `docker compose up` starts PostgreSQL and the API together.
+
+The tables are created on startup. FAISS still performs the vector search;
+PostgreSQL is the system of record for everything else:
+
+| Table | Contents |
+| --- | --- |
+| `documents` | Each indexed PDF: title, SHA-256, page and chunk counts, indexed time |
+| `chunks` | Each passage's page, section, text, and its id in the FAISS index |
+| `conversations`, `messages` | Chat history for the React UI, including each answer's sources |
+| `query_logs` | Every `/qa/ask`: question, found, top score and document, latency, embedding model |
+
+The `documents` and `chunks` tables are synced with the FAISS index on every
+startup. A document's chunks are rewritten only when the index was rebuilt.
+`GET /health` returns 503 with `"database": "unavailable"` when PostgreSQL is
+unreachable.
+
+Example: questions that found no answer, to spot gaps in the documents:
+
+```sql
+SELECT question, count(*) FROM query_logs WHERE NOT found GROUP BY 1 ORDER BY 2 DESC;
+```
+
 ## Run
 
 Start the API:
@@ -30,6 +71,43 @@ Start the Streamlit frontend in a second terminal:
 ```powershell
 streamlit run frontend/app.py
 ```
+
+### React chat frontend (MarketMind)
+
+`frontend-react/` is a React + TypeScript chat UI for the marketing knowledge
+base. It needs Node.js 18+ and the API running on port 8000:
+
+```powershell
+cd frontend-react
+npm install
+npm run dev
+```
+
+Open http://localhost:5173. The dev server proxies `/api/*` to
+`http://127.0.0.1:8000` (set `BACKEND_URL` to change it). For a production
+build, run `npm run build` and serve `frontend-react/dist/`, setting
+`VITE_API_URL` at build time to the API's public URL.
+
+The UI calls these endpoints:
+
+- `POST /qa/ask` with `{"question": "...", "conversation_id": "<uuid>"}`
+  returns the best-matching passage as `answer`, plus up to three `sources`
+  (document, page, excerpt, similarity score). `found` is false when nothing
+  clears the relevance threshold. `conversation_id` is optional; when given,
+  the question and answer are saved to that conversation.
+- `GET /qa/documents` lists the indexed PDFs with page and chunk counts.
+- `GET /conversations`, `POST /conversations` (`{"title": "..."}`),
+  `GET /conversations/{id}` (with its messages) and
+  `DELETE /conversations/{id}` manage chat history, which is stored in
+  PostgreSQL rather than in the browser.
+
+No language model is called yet: the answer is the top retrieved passage.
+
+The sample knowledge base describes the marketing team of **Honeycrumb
+Bakehouse**, a fictional bakery and dessert brand (see
+`data/policies/MARKETING_DOCS_INDEX.md`). Its five PDFs are generated from
+`scripts/marketing_docs_content.py`; edit that file and run
+`python scripts/generate_marketing_docs.py` to rebuild them.
 
 Place policy PDF files in `data/policies/`. Store local configuration in `.env`;
 never commit API keys or other secrets. Use `.env.example` as a template.
@@ -47,6 +125,14 @@ The backend embeds chunks locally and persists its FAISS index under
 - `hash`: deterministic token-hash vectors. They only match shared words, so
   paraphrased questions often miss.
 
+PDFs are chunked by structure, not by character count. The loader reads each
+page's layout to find headings (by font size and weight), paragraphs, bullets
+and table rows, and drops running headers and footers. The chunker then packs
+whole paragraphs into chunks of up to 700 characters that never cross a
+section heading, starts every chunk with its section path (for example
+`10. Channel Standards › Social media`), keeps each FAQ question with its
+answer, and rejoins paragraphs that a page break cut in two.
+
 Retrieval drops chunks whose cosine similarity is below a per-model minimum
 (0.60 for fastembed, 0.10 for hash). Set `RETRIEVAL_MIN_SCORE` to override it.
 
@@ -60,6 +146,10 @@ the repository root:
 ```powershell
 python -m unittest discover tests -v
 ```
+
+The API tests in `tests/test_api.py` use the database in `TEST_DATABASE_URL`
+and drop its tables on every run, so never point it at a database whose data
+you need. They are skipped when that database is unreachable.
 
 To add another embedding provider (for example Azure OpenAI), add an
 `Embeddings` class with a unique `model_id` and `default_min_score` in
