@@ -16,7 +16,7 @@ services:
 
   api:
     build: .
-    # Azure OpenAI, Brave Search and other settings come from .env (never baked into the image).
+    # Azure OpenAI and other settings come from .env (never baked into the image).
     env_file:
       - path: .env
         required: false

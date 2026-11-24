@@ -1,19 +1,4 @@
-import {
-  Bot,
-  ClipboardList,
-  Compass,
-  FileText,
-  LayoutDashboard,
-  Lightbulb,
-  Megaphone,
-  MessageSquare,
-  Plus,
-  Smile,
-  Target,
-  Trash2,
-  X,
-  type LucideIcon,
-} from "lucide-react";
+import { FileText, MessageSquare, MessagesSquare, Plus, Star, Trash2, X, type LucideIcon } from "lucide-react";
 import type { Conversation, DocumentInfo } from "../types";
 import { documentColor } from "../topics";
 import { Link, usePath } from "../router";
@@ -40,20 +25,13 @@ interface Props {
 
 const STATUS_LABEL: Record<BackendStatus, string> = {
   checking: "Connecting…",
-  online: "Recipe book online",
+  online: "Knowledge base online",
   offline: "Backend offline",
 };
 
-export const NAV: { to: string; label: string; icon: LucideIcon; match: (path: string) => boolean }[] = [
-  { to: "/", label: "Assistant", icon: MessageSquare, match: (p) => p === "/" },
-  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, match: (p) => p === "/dashboard" || p.startsWith("/insights") },
-  { to: "/campaigns", label: "Campaigns", icon: Megaphone, match: (p) => p.startsWith("/campaigns") },
-  { to: "/competitors", label: "Competitor Intelligence", icon: Target, match: (p) => p.startsWith("/competitors") },
-  { to: "/surveys", label: "AI Survey Studio", icon: ClipboardList, match: (p) => p.startsWith("/surveys") },
-  { to: "/sentiment", label: "Customer Sentiment", icon: Smile, match: (p) => p.startsWith("/sentiment") },
-  { to: "/research", label: "Market Research", icon: Compass, match: (p) => p.startsWith("/research") },
-  { to: "/strategy", label: "AI Marketing Strategy", icon: Lightbulb, match: (p) => p.startsWith("/strategy") },
-  { to: "/ai-team", label: "AI Team", icon: Bot, match: (p) => p.startsWith("/ai-team") },
+const NAV: { to: string; label: string; icon: LucideIcon }[] = [
+  { to: "/", label: "Assistant", icon: MessagesSquare },
+  { to: "/reviews", label: "Customer Reviews", icon: Star },
 ];
 
 export function Sidebar({ open, documents, status, onClose, chat }: Props) {
@@ -67,19 +45,22 @@ export function Sidebar({ open, documents, status, onClose, chat }: Props) {
         </button>
       </div>
 
-      <nav className="nav" aria-label="Modules">
-        {NAV.map(({ to, label, icon: Icon, match }) => (
-          <Link
-            key={to}
-            to={to}
-            className={`nav__item ${match(path) ? "is-active" : ""}`}
-            aria-current={match(path) ? "page" : undefined}
-            onClick={onClose}
-          >
-            <Icon size={16} />
-            <span>{label}</span>
-          </Link>
-        ))}
+      <nav className="nav" aria-label="Pages">
+        {NAV.map(({ to, label, icon: Icon }) => {
+          const active = to === "/" ? path === "/" : path.startsWith(to);
+          return (
+            <Link
+              key={to}
+              to={to}
+              className={`nav__item ${active ? "is-active" : ""}`}
+              aria-current={active ? "page" : undefined}
+              onClick={onClose}
+            >
+              <Icon size={16} />
+              <span>{label}</span>
+            </Link>
+          );
+        })}
       </nav>
 
       {chat && (

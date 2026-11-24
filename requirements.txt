@@ -14,5 +14,4 @@ sqlalchemy>=2.0
 psycopg[binary]>=3.2
 requests
 httpx
-pandas
 fastembed

@@ -1,10 +1,9 @@
-# MarketMind: Marketing Knowledge Assistant and Intelligence Platform
+# MarketMind: Marketing Knowledge Assistant
 
-A chatbot that answers questions from a company's marketing documents, plus AI
-modules for campaigns, competitor intelligence, surveys, customer sentiment,
-market research and marketing strategy, coordinated by a multi-agent
-supervisor. Built with FastAPI, PostgreSQL, FAISS, React and Azure OpenAI.
-See [Marketing intelligence platform](#marketing-intelligence-platform).
+A chatbot that answers questions from a company's marketing documents and
+cites the pages it used, plus a customer reviews dataset with an AI agent that
+analyses sentiment, demand and seasonality and recommends what to market at
+Christmas. Built with FastAPI, PostgreSQL, FAISS, React and Azure OpenAI.
 
 See [the problem statement](docs/problem_statement.md), [architecture](docs/architecture.md),
 and [project plan](docs/project_plan.md) for project context and implementation
@@ -154,132 +153,85 @@ Bakehouse**, a fictional bakery and dessert brand (see
 Place policy PDF files in `data/policies/`. Store local configuration in `.env`;
 never commit API keys or other secrets. Use `.env.example` as a template.
 
-## Marketing intelligence platform
+## Customer reviews and the Review Insights Agent
 
-On top of the document chatbot, MarketMind has AI modules that share one
-campaign hub. Open http://localhost:5173 and use the sidebar:
+The **Customer Reviews** page (http://localhost:5173/reviews, in the sidebar)
+shows a customer reviews dataset stored in PostgreSQL and an AI agent that
+analyses it for the marketing team.
 
-| Page | What it does |
-|---|---|
-| **Assistant** (`/`) | The original document chatbot, unchanged. |
-| **Dashboard** (`/dashboard`) | Campaign, insight, survey and real-response counts; recent insights. |
-| **Campaigns** (`/campaigns`) | Create and edit campaigns, or import the campaigns described in the PDFs (review before saving; each cites its pages). Each campaign page lists its insights and surveys. |
-| **Competitor Intelligence** (`/competitors`) | Comparison table (products, pricing, features, marketing, positioning), competitor profiles, SWOT, market gaps, differentiation and recommendations. |
-| **AI Survey Studio** (`/surveys`) | AI drafts multiple-choice, rating and open-ended questions; you edit, publish and share `/s/<id>`; real responses are stored, charted, exported as CSV and analysed. |
-| **Customer Sentiment** (`/sentiment`) | Paste feedback, upload a CSV, or use a survey's open-ended answers. Positive/neutral/negative split, topics, complaints, expectations, strengths, weaknesses and recommendations. |
-| **Market Research** (`/research`) | Trends, customer needs, underserved segments, opportunities and product gaps. Verified findings are kept apart from AI hypotheses. |
-| **AI Marketing Strategy** (`/strategy`) | Combines a campaign with its saved insights into audience, segmentation, positioning, USP, objectives, channels with budget split, content, timeline, action plan, KPIs and risks. **Apply to campaign** writes the results back onto the campaign. |
-| **AI Team** (`/ai-team`) | Chat with the supervisor agent, which brings in the specialists when a request needs them. |
+### The dataset
 
-Every saved result is an *analysis* linked to a campaign, listed on the
-dashboard and campaign page, and downloadable as **PDF** or **Markdown** (the
-PDF uses the brand styles of the company documents).
+| Table | Contents |
+| --- | --- |
+| `products` | 17 products with category, price and availability (e.g. "Nov–Dec") |
+| `reviews` | ~700 reviews: product, rating 1–5, text, customer, city, channel, date, plus the AI's sentiment, confidence and topics |
+| `product_sales` | Units and revenue per product per month |
+| `review_insights` | Each saved AI report with the statistics it was based on |
 
-### How the agents work
+Products, prices and seasonal windows come from the company documents. The
+**reviews and sales figures are generated sample data** (there is no real
+review export), produced deterministically by `backend/services/review_dataset.py`
+for November 2024 to October 2026, so they include two Christmas seasons.
 
-```
-            ┌──────────────────────── Supervisor Agent ────────────────────────┐
- AI Team ──►│ Azure OpenAI tool calling: answers simple questions directly,    │
-            │ calls specialists only when needed, runs independent ones in     │
-            │ parallel, then combines their findings                           │
-            └──┬─────────────┬──────────────┬─────────────┬─────────────┬─────┘
-               ▼             ▼              ▼             ▼             ▼
-          Competitor     Market         Survey       Sentiment      Strategy
-          Intelligence   Research       Agent        Analysis       Agent
-               │             │              │             │             │
-   Module pages call these specialists directly (no supervisor needed).
-               ▼             ▼              ▼             ▼             ▼
-      Evidence: D# document passages · W# web results (Brave) · U# user input
-                · A# earlier saved analyses (strategy)
-               ▼
-      JSON-schema structured output (strict) → citation check → PostgreSQL
+The API loads the dataset on first start. To rebuild it (this also clears the
+AI sentiment labels):
+
+```powershell
+python scripts/seed_reviews.py --reset
 ```
 
-- **Structured outputs.** Each agent asks `gpt-4o` for JSON matching a strict
-  schema (`backend/agents/*.py`), so results are always complete and typed.
-- **No invented facts.** Every claim lists the evidence ids that support it.
-  Citations to ids that were never provided are dropped, and claims left with
-  no citation are marked **AI inference** in the UI and reports
-  (`clean_points` in `backend/agents/base.py`). Market research moves
-  unsupported "findings" into the hypotheses list.
-- **Numbers come from data, not the model.** Sentiment percentages, topic
-  counts and survey statistics are computed in Python from the labelled items
-  and stored responses. Strategy budget shares are checked to total 100% of the
-  campaign budget, rescaled with a visible note if they don't, and converted
-  to dollar amounts.
-- **Real survey data only.** Responses come from the public survey link. The
-  app never generates sample or synthetic responses, refuses to analyse a
-  survey with no responses, and flags samples of 10 or fewer. Questions lock
-  once a survey is published so every response answers the same questions.
-- **Live research is explicit.** With `BRAVE_SEARCH_API_KEY` set, competitor
-  and market research add Brave Search results (URL, retrieval date, page
-  age). Without it nothing pretends to search the web: the UI warns, the
-  report says "Live web research: not performed", and the analysis relies on
-  the documents and what you enter about competitors. The sample company and
-  its competitors are fictional, so web search will not find them; enter
-  details in the competitor notes instead.
+On the page you can browse every product with its rating, sentiment split,
+units sold and a monthly sales chart, then filter, search, sort and page
+through the reviews and **Export CSV**.
 
-### Setup
+### The agent
 
-The modules use the Azure OpenAI settings above (`gpt-4o` 2024-08-06 or later
-for structured outputs). Optional settings in `.env`:
+**Run AI analysis** (`POST /reviews/insights`) runs the agent in
+`backend/services/review_agent.py`:
 
-```
-COMPANY_NAME=Honeycrumb Bakehouse   # the company the agents analyse
-BRAVE_SEARCH_API_KEY=               # enables live web research
-AGENT_TIMEOUT=120                   # seconds per AI call
-LOG_LEVEL=INFO
-```
+1. **Classify.** Azure OpenAI labels each review not yet analysed as positive,
+   neutral or negative, with a confidence and 1–3 topics, judging the text and
+   not only the stars. Labels are saved on the review, so later runs only
+   classify new reviews.
+2. **Measure.** Python computes ratings, sentiment shares, units and revenue
+   for the last 12 months, growth on the year before, seasonality (on sale
+   part of the year, or a month selling at least 1.6× a typical month) and
+   each product's December share.
+3. **Advise.** The model reads those statistics, the computed rankings and
+   real review quotes, then writes the report: summary, best reviewed, most in
+   demand, seasonal products, products needing attention, a **Christmas plan**
+   (hero products with campaign messages and ideas, gift bundles, timing and
+   what not to feature) and prioritised recommendations.
 
-New tables (`campaigns`, `analyses`, `surveys`, `survey_responses`) are
-created automatically on startup; existing tables are untouched.
-
-### API
+Every number shown is computed from the database, never by the model. Report
+entries about unknown products, citations of reviews it wasn't given, and
+bundles or hero products it also says not to feature are removed.
 
 | Method & path | Purpose |
-|---|---|
-| `GET /ai/status` | Whether Azure OpenAI and web search are configured |
-| `GET/POST /campaigns`, `GET/PATCH/DELETE /campaigns/{id}` | Campaigns (detail includes linked analyses and surveys) |
-| `POST /campaigns/import-proposals` | Campaigns found in the documents, for review (not saved) |
-| `POST /campaigns/{id}/apply-strategy/{analysis_id}` | Copy a strategy onto the campaign |
-| `POST /competitors/analyze` | `{competitors: [{name, website, notes}], industry, use_web, campaign_id}` |
-| `POST /research/analyze` | `{industry, audience, products, market_notes, use_web, campaign_id}` |
-| `POST /sentiment/analyze` | `{texts: [...]}` or `{csv_text, csv_column}` (≤ 500 items) |
-| `POST /strategy/generate` | `{campaign_id, analysis_ids?, notes}`; defaults to the latest insight of each kind |
-| `GET /analyses`, `GET/DELETE /analyses/{id}` | Saved results (`?kind=&campaign_id=`) |
-| `GET /analyses/{id}/report.pdf` · `report.md` | Downloadable reports with sources |
-| `POST /surveys/generate`, `GET /surveys`, `GET/PUT/DELETE /surveys/{id}` | Survey drafts and editing |
-| `POST /surveys/{id}/publish` · `close` | Open or stop collecting responses |
-| `GET /surveys/{id}/results` · `responses.csv`, `POST /surveys/{id}/analyze` | Statistics, export, AI analysis |
-| `GET /public/surveys/{id}`, `POST /public/surveys/{id}/responses` | Used by respondents through the share link |
-| `POST /agent/chat` | Supervisor; streams `step` events, then `answer` (NDJSON) |
+| --- | --- |
+| `GET /reviews/overview` | Dataset size, period, analysed count, AI status |
+| `GET /reviews/products` | Per-product statistics, monthly units and rankings |
+| `GET /reviews` | Reviews; filters `product_id`, `sentiment`, `rating`, `q`, `date_from`, `date_to`, `sort`, `limit`, `offset` |
+| `GET /reviews/export.csv` | The (filtered) reviews as CSV |
+| `POST /reviews/insights` | Run the agent (`{"reclassify": true}` relabels every review) |
+| `GET /reviews/insights/latest` | The latest saved report |
 
-AI errors map to HTTP status codes: 503 when Azure OpenAI is not configured,
-502 when the AI call fails, 422 for invalid input.
-
-### Docker
+## Docker
 
 `docker compose up --build` starts PostgreSQL, the API (settings from `.env`
 via `env_file`) and the React dev server on http://localhost:5173. The
 `.dockerignore` keeps `.env` and local environments out of the image. The
 compose database uses port 5432; stop a local PostgreSQL first or change the
 mapping. For production, build the frontend with `npm run build` and serve
-`frontend-react/dist/` with a fallback to `index.html` so links such as
-`/s/<survey-id>` work.
+`frontend-react/dist/`.
 
-The public survey endpoints have no authentication or rate limiting. Put the
-API behind your usual gateway before sharing survey links widely.
-
-### Tests
+## Tests
 
 ```powershell
 python -m unittest discover tests -v
 ```
 
-`tests/test_intelligence.py` covers the modules with a fake model:
-citation cleaning, computed statistics, survey validation and lifecycle,
-budget checks, web-search handling, reports, error codes and the supervisor's
-tool flow. API tests need the PostgreSQL test database (`TEST_DATABASE_URL`)
+API tests need the PostgreSQL test database (`TEST_DATABASE_URL`)
 and are skipped if it is unreachable.
 
 ## Local FAISS retrieval
