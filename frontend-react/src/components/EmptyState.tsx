@@ -1,14 +1,10 @@
 import type { CSSProperties } from "react";
-import { ArrowUpRight, Sparkles } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { TOPICS } from "../topics";
 
 export function EmptyState({ onPick }: { onPick: (prompt: string) => void }) {
   return (
     <div className="empty">
-      <div className="empty__badge">
-        <Sparkles size={14} />
-        Grounded in Honeycrumb's marketing playbooks
-      </div>
       <h1 className="empty__title">
         What are we <span className="gradient-text">baking up</span> today?
       </h1>

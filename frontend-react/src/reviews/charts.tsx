@@ -1,6 +1,6 @@
 // Small charts for the reviews page: sentiment split, monthly demand, star ratings.
 // Colors: blue/red diverging poles with a gray neutral midpoint (validated for
-// color-vision deficiency); demand uses one amber hue, Nov–Dec in its darker step.
+// color-vision deficiency); demand uses one caramel hue, Nov–Dec in its darker brown step.
 import { useState } from "react";
 import { Star } from "lucide-react";
 import type { Sentiment } from "./types";

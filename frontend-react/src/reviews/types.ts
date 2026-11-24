@@ -11,6 +11,8 @@ export interface Overview {
   latest_insight_at: string | null;
   ai_configured: boolean;
   model: string | null;
+  /** Seconds between simulated new reviews, or null when the live feed is off. */
+  feed_seconds: number | null;
 }
 
 export interface ProductStats {

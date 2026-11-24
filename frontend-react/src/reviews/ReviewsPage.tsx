@@ -10,6 +10,7 @@ import { InsightsReport } from "./InsightsReport";
 import type { Insight, Overview, ProductsResponse, Review, ReviewFilters } from "./types";
 
 const PAGE_SIZE = 25;
+const NEW_REVIEW_POLL_MS = 20000; // how often the page checks for newly arrived reviews
 
 function useBackend() {
   const [status, setStatus] = useState<BackendStatus>("checking");
@@ -107,13 +108,21 @@ function InsightsCard({ overview, onDone }: { overview: Overview | null; onDone:
           </h2>
           <p className="card__subtitle">
             {insight
-              ? `Last run ${new Date(insight.created_at).toLocaleString()}${pending ? ` · ${pending} new reviews not yet analysed` : ""}`
+              ? `Last run ${new Date(insight.created_at).toLocaleString()}`
               : "The agent reads every review, labels its sentiment, and tells you what customers love, what sells, what's seasonal and what to market at Christmas."}
           </p>
         </div>
-        <button className="btn" onClick={run} disabled={running || overview?.ai_configured === false}>
-          {insight ? <RefreshCw size={15} /> : <Sparkles size={15} />} {running ? "Analysing…" : insight ? "Run again" : "Run AI analysis"}
-        </button>
+        <div className="run-row">
+          {insight && pending > 0 && !running && (
+            <span className="new-badge" role="status" title="Not analysed yet. Run again to include them in the report.">
+              <span className="new-badge__dot" aria-hidden="true" />
+              {pending} new {pending === 1 ? "review" : "reviews"}
+            </span>
+          )}
+          <button className="btn" onClick={run} disabled={running || overview?.ai_configured === false}>
+            {insight ? <RefreshCw size={15} /> : <Sparkles size={15} />} {running ? "Analysing…" : insight ? "Run again" : "Run AI analysis"}
+          </button>
+        </div>
       </div>
       {overview?.ai_configured === false && (
         <div className="alert alert--warn">
@@ -391,6 +400,28 @@ export function ReviewsPage() {
     document.title = "Customer Reviews · MarketMind";
     load();
   }, [load]);
+
+  // New reviews can arrive while the page is open (the live review feed), so check
+  // the totals now and then and refresh the tables when the count changes.
+  const knownTotal = useRef<number | null>(null);
+  useEffect(() => {
+    knownTotal.current = overview?.reviews ?? null;
+  }, [overview]);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      reviewsApi
+        .overview()
+        .then((o) => {
+          if (knownTotal.current !== null && o.reviews !== knownTotal.current) {
+            reviewsApi.products().then(setProducts).catch(() => undefined);
+            setRefreshKey((k) => k + 1);
+          }
+          setOverview(o);
+        })
+        .catch(() => undefined); // a missed poll is harmless; the next one retries
+    }, NEW_REVIEW_POLL_MS);
+    return () => clearInterval(timer);
+  }, []);
 
   const pickProduct = (id: number) => {
     setFilters({ product_id: id });

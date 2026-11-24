@@ -4,6 +4,7 @@ import hashlib
 import logging
 import re
 from collections import defaultdict
+from datetime import date, datetime
 from pathlib import Path
 
 from langchain_community.vectorstores import FAISS
@@ -21,6 +22,20 @@ def title_from_filename(name: str) -> str:
     stem = name.rsplit(".", 1)[0]
     words = re.sub(r"(?<=[a-z])(?=[A-Z0-9])|(?<=[0-9])(?=[A-Z])", " ", stem)
     return words.strip()
+
+
+_LAST_UPDATED = re.compile(r"Last updated\W+([A-Z][a-z]+ \d{1,2}, \d{4})")
+
+
+def last_updated(text: str) -> date | None:
+    """Read 'Last updated | November 10, 2026' from a document's details table."""
+    match = _LAST_UPDATED.search(text)
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%B %d, %Y").date()
+    except ValueError:
+        return None
 
 
 def _file_hash(path: Path) -> str:

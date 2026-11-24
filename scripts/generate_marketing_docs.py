@@ -13,7 +13,7 @@ from pathlib import Path
 import pymupdf
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from marketing_docs_content import COMPANY, DOCUMENTS  # noqa: E402
+from marketing_docs_content import COMPANY, DOCUMENTS, LAST_UPDATED  # noqa: E402
 
 OUTPUT_DIRECTORY = Path(__file__).resolve().parents[1] / "data" / "policies"
 
@@ -36,13 +36,14 @@ PAGE = pymupdf.paper_rect("letter")
 CONTENT = PAGE + (54, 64, -54, -54)
 
 
-def _stamp_pages(path: Path, title: str) -> None:
-    """Add a header band and page-number footer to every page."""
+def _stamp_pages(path: Path, title: str, updated: str) -> None:
+    """Add a header band and a last-updated / page-number footer to every page."""
     document = pymupdf.open(path)
     for number, page in enumerate(document, start=1):
         page.wrap_contents()
         page.draw_rect(pymupdf.Rect(0, 0, PAGE.width, 8), color=None, fill=(0.96, 0.65, 0.14))
         page.insert_text((54, 34), f"{COMPANY} · {title}", fontsize=8, color=(0.54, 0.42, 0.35))
+        page.insert_text((54, PAGE.height - 28), f"Last updated: {updated}", fontsize=8, color=(0.54, 0.42, 0.35))
         page.insert_text(
             (PAGE.width - 110, PAGE.height - 28),
             f"Page {number} of {document.page_count}",
@@ -65,7 +66,7 @@ def render(name: str, html: str) -> Path:
         writer.end_page()
     writer.close()
     title = name.removesuffix(".pdf")
-    _stamp_pages(path, title)
+    _stamp_pages(path, title, LAST_UPDATED[name])
     return path
 
 

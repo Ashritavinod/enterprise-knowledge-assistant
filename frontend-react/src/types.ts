@@ -31,6 +31,8 @@ export type StreamEvent =
 export interface DocumentInfo {
   name: string;
   title: string;
+  /** ISO date (YYYY-MM-DD) from the document's "Last updated" row, if any. */
+  last_updated?: string | null;
 }
 
 export type Message =

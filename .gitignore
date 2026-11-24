@@ -9,3 +9,6 @@ logs/*
 !logs/.gitkeep
 data/indexes/
 data/index/
+
+# Personal study material (not part of the app)
+MarketMind_Technical_Study_Guide.pptx

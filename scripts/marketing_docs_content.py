@@ -9,12 +9,24 @@ consistent across files. Edit the HTML here and rerun
 COMPANY = "Honeycrumb Bakehouse"
 
 
-def meta_table(owner: str, version: str, effective: str, review: str, related: str) -> str:
+# When each document was last revised. Shown in the document's details table
+# and in every page footer; edit here and regenerate the PDFs.
+LAST_UPDATED = {
+    "BrandGuidelines.pdf": "November 10, 2026",
+    "MarketingStrategy2026.pdf": "November 3, 2026",
+    "CampaignPlaybook.pdf": "November 17, 2026",
+    "ProductMarketingGuide.pdf": "November 12, 2026",
+    "MarketingFAQ.pdf": "November 20, 2026",
+}
+
+
+def meta_table(owner: str, version: str, effective: str, review: str, related: str, *, document: str) -> str:
     return f"""
 <table class="meta">
 <tr><td><b>Document owner</b></td><td>{owner}</td></tr>
 <tr><td><b>Version</b></td><td>{version}</td></tr>
 <tr><td><b>Effective date</b></td><td>{effective}</td></tr>
+<tr><td><b>Last updated</b></td><td>{LAST_UPDATED[document]}</td></tr>
 <tr><td><b>Next review</b></td><td>{review}</td></tr>
 <tr><td><b>Classification</b></td><td>Internal Use Only</td></tr>
 <tr><td><b>Related documents</b></td><td>{related}</td></tr>
@@ -26,7 +38,8 @@ BRAND_GUIDELINES = f"""
 <h1>Honeycrumb Bakehouse Brand Guidelines</h1>
 <p class="sub">How Honeycrumb looks, sounds and shows up everywhere we bake, post and serve.</p>
 {meta_table("Theo Marchetti, VP Brand &amp; Creative", "4.0", "January 6, 2026", "July 2026",
-            "MarketingStrategy2026.pdf, CampaignPlaybook.pdf, ProductMarketingGuide.pdf, MarketingFAQ.pdf")}
+            "MarketingStrategy2026.pdf, CampaignPlaybook.pdf, ProductMarketingGuide.pdf, MarketingFAQ.pdf",
+            document="BrandGuidelines.pdf")}
 
 <h2>1. Company Overview</h2>
 <p>Honeycrumb Bakehouse is a scratch bakery and dessert brand founded in 2011 in Portland, Oregon,
@@ -142,7 +155,8 @@ MARKETING_STRATEGY = f"""
 <h1>Honeycrumb Bakehouse Marketing Strategy 2026</h1>
 <p class="sub">The CMO's annual plan: goals, audiences, channels, budget and roadmap.</p>
 {meta_table("Olivia Hartwell, Chief Marketing Officer", "1.2", "January 12, 2026", "June 2026",
-            "BrandGuidelines.pdf, CampaignPlaybook.pdf, ProductMarketingGuide.pdf, MarketingFAQ.pdf")}
+            "BrandGuidelines.pdf, CampaignPlaybook.pdf, ProductMarketingGuide.pdf, MarketingFAQ.pdf",
+            document="MarketingStrategy2026.pdf")}
 
 <h2>1. Executive Summary</h2>
 <p>2026 is our expansion year. Honeycrumb will grow revenue from $148M in 2025 to $182M in 2026,
@@ -247,7 +261,8 @@ CAMPAIGN_PLAYBOOK = f"""
 <p class="sub">Step-by-step guide to planning, approving, launching and measuring campaigns.</p>
 {meta_table("Sana Qureshi, Director of Growth Marketing, and Reggie Thompson, Marketing Operations Manager",
             "3.1", "January 20, 2026", "July 2026",
-            "BrandGuidelines.pdf, MarketingStrategy2026.pdf, ProductMarketingGuide.pdf, MarketingFAQ.pdf")}
+            "BrandGuidelines.pdf, MarketingStrategy2026.pdf, ProductMarketingGuide.pdf, MarketingFAQ.pdf",
+            document="CampaignPlaybook.pdf")}
 
 <h2>1. Campaign Planning Framework</h2>
 <p>Every campaign starts with a one-page brief stating the goal, persona, offer, channels, budget,
@@ -340,7 +355,8 @@ PRODUCT_GUIDE = f"""
 <h1>Honeycrumb Bakehouse Product Marketing Guide</h1>
 <p class="sub">Menu, positioning, messaging and selling guidance for every Honeycrumb product line.</p>
 {meta_table("Camille Dubois, Director of Product Marketing", "2.3", "February 2, 2026", "August 2026",
-            "BrandGuidelines.pdf, MarketingStrategy2026.pdf, CampaignPlaybook.pdf, MarketingFAQ.pdf")}
+            "BrandGuidelines.pdf, MarketingStrategy2026.pdf, CampaignPlaybook.pdf, MarketingFAQ.pdf",
+            document="ProductMarketingGuide.pdf")}
 
 <h2>1. Product Lines</h2>
 <table>
@@ -502,7 +518,8 @@ def faq_html() -> str:
         '<p class="sub">Quick answers for marketers, café managers, creators and agency partners.</p>',
         meta_table("Reggie Thompson, Marketing Operations Manager", "2.0", "February 9, 2026",
                    "May 2026",
-                   "BrandGuidelines.pdf, MarketingStrategy2026.pdf, CampaignPlaybook.pdf, ProductMarketingGuide.pdf"),
+                   "BrandGuidelines.pdf, MarketingStrategy2026.pdf, CampaignPlaybook.pdf, ProductMarketingGuide.pdf",
+                   document="MarketingFAQ.pdf"),
     ]
     for topic, items in FAQ_ITEMS:
         parts.append(f"<h2>{topic}</h2>")

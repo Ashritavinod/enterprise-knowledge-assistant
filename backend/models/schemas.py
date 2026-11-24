@@ -1,7 +1,7 @@
 """Request and response models for the API."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -41,6 +41,8 @@ class DocumentInfo(BaseModel):
     page_count: int = 0
     chunk_count: int = 0
     indexed_at: datetime | None = None
+    # From the "Last updated" row of the document's details table, if it has one.
+    last_updated: date | None = None
 
 
 class DocumentsResponse(BaseModel):

@@ -6,6 +6,7 @@ import re
 import time
 import uuid
 from collections.abc import Iterator
+from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -15,7 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.database import get_db, session_scope
-from backend.db.models import Conversation, Document, Message, QueryLog
+from backend.db.models import Chunk, Conversation, Document, Message, QueryLog
 from backend.models.schemas import (
     AskRequest,
     AskResponse,
@@ -29,6 +30,7 @@ from backend.services.azure_openai import (
     rewrite_question,
     stream_answer,
 )
+from backend.services.document_registry import last_updated
 from backend.services.rag_service import retrieve_documents
 from backend.services.vector_store import get_embedding_model_id
 
@@ -284,7 +286,16 @@ async def ask_stream(request: AskRequest) -> StreamingResponse:
 
 @router.get("/documents", response_model=DocumentsResponse)
 def documents(db: Session = Depends(get_db)) -> DocumentsResponse:
-    rows = db.scalars(select(Document).order_by(Document.name))
+    rows = db.scalars(select(Document).order_by(Document.name)).all()
+    # The date sits in the details table near the start, so read chunks in order.
+    updated: dict[int, date] = {}
+    for document_id, content in db.execute(
+        select(Chunk.document_id, Chunk.content)
+        .where(Chunk.content.contains("Last updated"))
+        .order_by(Chunk.document_id, Chunk.chunk_index)
+    ):
+        if document_id not in updated and (found := last_updated(content)):
+            updated[document_id] = found
     return DocumentsResponse(
         documents=[
             DocumentInfo(
@@ -293,6 +304,7 @@ def documents(db: Session = Depends(get_db)) -> DocumentsResponse:
                 page_count=row.page_count,
                 chunk_count=row.chunk_count,
                 indexed_at=row.indexed_at,
+                last_updated=updated.get(row.id),
             )
             for row in rows
         ]

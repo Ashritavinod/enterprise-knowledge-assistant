@@ -2,15 +2,15 @@
 
 Sample corpus for the **MarketMind** marketing knowledge assistant. All five documents describe the marketing team of the same fictional company, **Honeycrumb Bakehouse**: a scratch bakery and dessert brand founded in Portland, Oregon in 2011, with 64 cafés across Oregon, Washington and California, the Crumb Club loyalty program, celebration cakes, and the Honeycrumb at Home grocery line. Names, numbers, colors and rules are consistent across documents, so questions can be answered from more than one file.
 
-The PDFs are generated from `scripts/marketing_docs_content.py` by running `python scripts/generate_marketing_docs.py`. Edit the content there and regenerate; the search index rebuilds automatically on the next backend start.
+The PDFs are generated from `scripts/marketing_docs_content.py` by running `python scripts/generate_marketing_docs.py`. Edit the content there (last-updated dates are in `LAST_UPDATED`) and regenerate; the search index rebuilds automatically on the next backend start.
 
-| # | File | Owner | Focus |
-|---|------|-------|-------|
-| 1 | BrandGuidelines.pdf | Theo Marchetti, VP Brand & Creative | Brand identity, voice, visuals and channel rules |
-| 2 | MarketingStrategy2026.pdf | Olivia Hartwell, CMO | 2026 goals, personas, competitors, budget and roadmap |
-| 3 | CampaignPlaybook.pdf | Sana Qureshi & Reggie Thompson | Campaign tiers, approvals, offers, launches and reporting |
-| 4 | ProductMarketingGuide.pdf | Camille Dubois, Director of Product Marketing | Menu, pricing, positioning, pitches and objection handling |
-| 5 | MarketingFAQ.pdf | Reggie Thompson, Marketing Operations | 25 quick answers across all marketing topics |
+| # | File | Owner | Last updated | Focus |
+|---|------|-------|--------------|-------|
+| 1 | BrandGuidelines.pdf | Theo Marchetti, VP Brand & Creative | Nov 10, 2026 | Brand identity, voice, visuals and channel rules |
+| 2 | MarketingStrategy2026.pdf | Olivia Hartwell, CMO | Nov 3, 2026 | 2026 goals, personas, competitors, budget and roadmap |
+| 3 | CampaignPlaybook.pdf | Sana Qureshi & Reggie Thompson | Nov 17, 2026 | Campaign tiers, approvals, offers, launches and reporting |
+| 4 | ProductMarketingGuide.pdf | Camille Dubois, Director of Product Marketing | Nov 12, 2026 | Menu, pricing, positioning, pitches and objection handling |
+| 5 | MarketingFAQ.pdf | Reggie Thompson, Marketing Operations | Nov 20, 2026 | 25 quick answers across all marketing topics |
 
 ## Key facts at a glance
 

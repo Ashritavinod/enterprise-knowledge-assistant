@@ -21,6 +21,7 @@ os.environ["DATABASE_URL"] = os.getenv(
 )
 # Answers must be the top passage here; Azure generation is tested with a fake client.
 os.environ["LLM_PROVIDER"] = "none"
+os.environ["REVIEW_FEED_SECONDS"] = "0"  # no simulated reviews arriving mid-test
 
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import func, select  # noqa: E402
@@ -124,6 +125,9 @@ class QaApiTests(ApiTestCase):
         self.assertGreater(by_name["BrandGuidelines.pdf"]["chunk_count"], 0)
         self.assertGreater(by_name["BrandGuidelines.pdf"]["page_count"], 0)
         self.assertIn("Marketing Strategy 2026", {d["title"] for d in documents})
+        # Read from each PDF's details table ("Last updated | November 10, 2026").
+        self.assertEqual(by_name["BrandGuidelines.pdf"]["last_updated"], "2026-11-10")
+        self.assertTrue(all(d["last_updated"] for d in documents))
         with session_scope() as db:
             stored_chunks = db.scalar(select(func.count()).select_from(models.Chunk))
         self.assertEqual(stored_chunks, sum(d["chunk_count"] for d in documents))

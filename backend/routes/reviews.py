@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from backend.db.database import get_db
 from backend.db.models import Product, Review, ReviewInsight
-from backend.services import review_agent
+from backend.services import review_agent, review_feed
 
 router = APIRouter(prefix="/reviews", tags=["customer reviews"])
 
@@ -44,7 +44,16 @@ def overview(db: Session = Depends(get_db)) -> dict[str, Any]:
         "latest_insight_at": latest,
         "ai_configured": model is not None,
         "model": model,
+        "feed_seconds": review_feed.feed_interval() or None,
     }
+
+
+@router.post("/simulate", status_code=status.HTTP_201_CREATED)
+def simulate(count: int = Query(1, ge=1, le=20), db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Add `count` realistic new reviews dated today (unanalysed), as the live feed does."""
+    added = review_feed.add_reviews(db, count)
+    db.commit()
+    return {"added": [{"id": r.id, "product_id": r.product_id, "rating": r.rating, "text": r.text} for r in added]}
 
 
 @router.get("/products")

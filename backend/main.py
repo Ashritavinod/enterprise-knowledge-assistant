@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import logging
 import os
 from collections.abc import AsyncGenerator
@@ -10,7 +12,7 @@ from backend.db.database import check_db, dispose_engine, init_db, session_scope
 from backend.routes.conversations import router as conversations_router
 from backend.routes.qa import router as qa_router
 from backend.routes.reviews import router as reviews_router
-from backend.services import review_dataset
+from backend.services import review_dataset, review_feed
 from backend.services.azure_openai import chat_deployment
 from backend.services.document_registry import sync_documents
 from backend.services.pdf_loader import load_documents
@@ -41,7 +43,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     with session_scope() as session:
         sync_documents(session, app.state.vector_store)
         review_dataset.seed(session)  # sample reviews dataset, loaded once
+    # Optional simulated live feed of new reviews (REVIEW_FEED_SECONDS).
+    interval = review_feed.feed_interval()
+    feed = asyncio.create_task(review_feed.run_feed(interval)) if interval else None
     yield
+    if feed:
+        feed.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await feed
     dispose_engine()
 
 

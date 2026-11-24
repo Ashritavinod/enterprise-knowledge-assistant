@@ -23,8 +23,8 @@ export const TOPICS: Topic[] = [
   {
     id: "brand",
     label: "Brand",
-    color: "#E8456B",
-    soft: "#FDECF0",
+    color: "#B92510",
+    soft: "#F8E4DF",
     icon: Palette,
     prompt: "What is the hex code for Raspberry Swirl?",
     blurb: "Colors, fonts, voice & food photography",
@@ -32,8 +32,8 @@ export const TOPICS: Topic[] = [
   {
     id: "strategy",
     label: "Strategy 2026",
-    color: "#5B5FC7",
-    soft: "#EEEFFB",
+    color: "#46608C",
+    soft: "#E8ECF3",
     icon: Target,
     prompt: "How is the 2026 marketing budget allocated?",
     blurb: "Goals, personas, budget & roadmap",
@@ -41,8 +41,8 @@ export const TOPICS: Topic[] = [
   {
     id: "campaigns",
     label: "Campaigns",
-    color: "#D98A0B",
-    soft: "#FEF4E2",
+    color: "#A35A1F",
+    soft: "#F6E9DC",
     icon: Megaphone,
     prompt: "What is the approval SLA for Tier 1 content?",
     blurb: "Approvals, offers, launches & A/B tests",
@@ -50,8 +50,8 @@ export const TOPICS: Topic[] = [
   {
     id: "menu",
     label: "Menu & Cakes",
-    color: "#5E9A3F",
-    soft: "#EEF6E8",
+    color: "#4E7A3A",
+    soft: "#E9F0E4",
     icon: CakeSlice,
     prompt: "How much does an 8-inch celebration cake cost?",
     blurb: "Pricing, launches, pitches & claims",
@@ -59,8 +59,8 @@ export const TOPICS: Topic[] = [
   {
     id: "social",
     label: "Social",
-    color: "#C2417F",
-    soft: "#FBEAF2",
+    color: "#9C3F5A",
+    soft: "#F4E4E8",
     icon: Camera,
     prompt: "How many hashtags can I use in a social post?",
     blurb: "Instagram, TikTok & community care",
@@ -68,8 +68,8 @@ export const TOPICS: Topic[] = [
   {
     id: "loyalty",
     label: "Crumb Club",
-    color: "#8B5A3C",
-    soft: "#F6ECE4",
+    color: "#8B572A",
+    soft: "#F2E8DE",
     icon: Gift,
     prompt: "What perks do loyalty members get?",
     blurb: "Loyalty, email & CRM",
@@ -78,14 +78,14 @@ export const TOPICS: Topic[] = [
 
 /** Accent color per source document, used on citation chips. */
 export const DOCUMENT_COLORS: Record<string, string> = {
-  "BrandGuidelines.pdf": "#E8456B",
-  "MarketingStrategy2026.pdf": "#5B5FC7",
-  "CampaignPlaybook.pdf": "#D98A0B",
-  "ProductMarketingGuide.pdf": "#5E9A3F",
-  "MarketingFAQ.pdf": "#8B5A3C",
+  "BrandGuidelines.pdf": "#B92510",
+  "MarketingStrategy2026.pdf": "#46608C",
+  "CampaignPlaybook.pdf": "#A35A1F",
+  "ProductMarketingGuide.pdf": "#4E7A3A",
+  "MarketingFAQ.pdf": "#8B572A",
 };
 
-export const documentColor = (name: string) => DOCUMENT_COLORS[name] ?? "#E8456B";
+export const documentColor = (name: string) => DOCUMENT_COLORS[name] ?? "#B92510";
 
 export const documentTitle = (name: string) =>
   name

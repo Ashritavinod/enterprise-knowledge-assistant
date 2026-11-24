@@ -235,7 +235,7 @@ export default function App() {
           <button className="icon-btn topbar__menu" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
             <Menu size={20} />
           </button>
-          <div className="topbar__title">{active ? active.title : "New conversation"}</div>
+          <div className="topbar__title">{active?.title}</div>
           {active && (
             <button className="ghost-btn" onClick={newChat}>
               <Plus size={16} />

@@ -4,6 +4,13 @@ import { documentColor } from "../topics";
 import { Link, usePath } from "../router";
 import { Logo } from "./Logo";
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "2026-11-10" -> "Nov 10, 2026" (parsed by hand so no timezone can shift the day). */
+const formatDay = (iso: string) => {
+  const [y, m, d] = iso.split("-").map(Number);
+  return `${MONTHS[m - 1]} ${d}, ${y}`;
+};
+
 export type BackendStatus = "checking" | "online" | "offline";
 
 interface ChatProps {
@@ -23,18 +30,12 @@ interface Props {
   chat?: ChatProps;
 }
 
-const STATUS_LABEL: Record<BackendStatus, string> = {
-  checking: "Connecting…",
-  online: "Knowledge base online",
-  offline: "Backend offline",
-};
-
 const NAV: { to: string; label: string; icon: LucideIcon }[] = [
   { to: "/", label: "Assistant", icon: MessagesSquare },
   { to: "/reviews", label: "Customer Reviews", icon: Star },
 ];
 
-export function Sidebar({ open, documents, status, onClose, chat }: Props) {
+export function Sidebar({ open, documents, onClose, chat }: Props) {
   const path = usePath();
   return (
     <aside className={`sidebar ${open ? "is-open" : ""}`} aria-label="Navigation">
@@ -103,21 +104,23 @@ export function Sidebar({ open, documents, status, onClose, chat }: Props) {
         <h2 className="sidebar__heading">Knowledge base</h2>
         <ul className="doc-list">
           {documents.map((d) => (
-            <li key={d.name} title={d.name}>
+            <li key={d.name} title={d.last_updated ? `${d.name} · last updated ${formatDay(d.last_updated)}` : d.name}>
               <span className="doc-list__icon" style={{ color: documentColor(d.name) }}>
                 <FileText size={15} />
               </span>
-              {d.title}
+              <span className="doc-list__text">
+                <span className="doc-list__title">{d.title}</span>
+                {d.last_updated && (
+                  <span className="doc-list__date">
+                    Updated <time dateTime={d.last_updated}>{formatDay(d.last_updated)}</time>
+                  </span>
+                )}
+              </span>
             </li>
           ))}
           {documents.length === 0 && <li className="sidebar__empty">No documents loaded.</li>}
         </ul>
       </section>
-
-      <footer className={`status status--${status}`} role="status">
-        <span className="status__dot" />
-        {STATUS_LABEL[status]}
-      </footer>
     </aside>
   );
 }

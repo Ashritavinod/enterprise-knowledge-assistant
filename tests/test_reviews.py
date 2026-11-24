@@ -9,6 +9,7 @@ recreated) and are skipped when it is unreachable.
 import csv
 import io
 import os
+import random
 import re
 import unittest
 from datetime import date
@@ -22,6 +23,7 @@ os.environ["DATABASE_URL"] = os.getenv(
     "postgresql+psycopg://postgres:postgres@localhost:5432/knowledge_assistant_test",
 )
 os.environ["LLM_PROVIDER"] = "none"  # nothing here may call Azure
+os.environ["REVIEW_FEED_SECONDS"] = "0"  # tests add reviews explicitly instead
 
 import logging  # noqa: E402
 
@@ -29,7 +31,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from backend.db import models  # noqa: E402
 from backend.db.database import check_db, get_engine  # noqa: E402
-from backend.services import review_agent, review_dataset  # noqa: E402
+from backend.services import review_agent, review_dataset, review_feed  # noqa: E402
 
 logging.disable(logging.CRITICAL)
 
@@ -91,6 +93,23 @@ class DatasetTests(unittest.TestCase):
         texts = " ".join(r["text"] for r in review_dataset.generate()[2])
         self.assertNotIn("christmas", texts)
         self.assertIn("Christmas", texts)
+
+
+class ReviewFeedTests(unittest.TestCase):
+    def test_new_reviews_only_cover_products_on_sale(self) -> None:
+        rng = random.Random(7)
+        november = {review_feed.new_review(rng, date(2026, 11, 24))["sku"] for _ in range(300)}
+        self.assertIn("SEA-002", november)  # holiday cookie tin is on sale
+        self.assertNotIn("SEA-004", november)  # summer gelato is not
+        self.assertNotIn("SEA-005", november)  # nor Valentine's cookies
+        row = review_feed.new_review(rng, date(2026, 11, 24))
+        self.assertEqual(row["review_date"], date(2026, 11, 24))
+        self.assertTrue(1 <= row["rating"] <= 5 and row["text"])
+
+    def test_feed_interval_setting(self) -> None:
+        for raw, expected in (("", 0.0), ("0", 0.0), ("90", 90.0), ("soon", 0.0), ("-5", 0.0)):
+            with mock.patch.dict(os.environ, {"REVIEW_FEED_SECONDS": raw}):
+                self.assertEqual(review_feed.feed_interval(), expected)
 
 
 class SeasonalityTests(unittest.TestCase):
@@ -213,6 +232,25 @@ class ReviewsApiTests(unittest.TestCase):
         products = {p["name"]: p for p in self.client.get("/reviews/products").json()["products"]}
         self.assertIsNotNone(products["Yule Log"]["net_sentiment"])
         self.assertEqual(self.client.get("/reviews/insights/latest").json()["id"], again.json()["id"])
+
+    def test_simulated_reviews_await_the_next_run(self) -> None:
+        before = self.client.get("/reviews/overview").json()
+        added = self.client.post("/reviews/simulate", params={"count": 3})
+        self.assertEqual(added.status_code, 201, added.text)
+        ids = [r["id"] for r in added.json()["added"]]
+        self.assertEqual(len(ids), 3)
+        after = self.client.get("/reviews/overview").json()
+        self.assertEqual(after["reviews"], before["reviews"] + 3)
+        self.assertEqual(after["reviews"] - after["analysed"], before["reviews"] - before["analysed"] + 3)
+        self.assertIsNone(after["feed_seconds"])  # the live feed is off in tests
+        newest = self.client.get("/reviews", params={"sentiment": "unanalysed", "limit": 200}).json()["items"]
+        self.assertTrue(set(ids) <= {r["id"] for r in newest})
+        self.assertEqual(self.client.post("/reviews/simulate", params={"count": 0}).status_code, 422)
+        # Leave the dataset as the other tests expect it.
+        from backend.db.database import session_scope
+
+        with session_scope() as db:
+            db.execute(models.Review.__table__.delete().where(models.Review.id.in_(ids)))
 
 
 if __name__ == "__main__":
