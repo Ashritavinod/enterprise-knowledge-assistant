@@ -3,7 +3,7 @@ import type { Insight, Overview, ProductsResponse, Review, ReviewFilters } from 
 
 const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "/api";
 
-async function call<T>(path: string, init?: RequestInit): Promise<T> {
+export async function call<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${BASE}${path}`, { ...init, headers: { "Content-Type": "application/json" } });

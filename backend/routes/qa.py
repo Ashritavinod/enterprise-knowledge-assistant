@@ -2,7 +2,6 @@
 
 import json
 import logging
-import re
 import time
 import uuid
 from collections.abc import Iterator
@@ -31,7 +30,12 @@ from backend.services.azure_openai import (
     stream_answer,
 )
 from backend.services.document_registry import last_updated
-from backend.services.rag_service import retrieve_documents
+from backend.services.rag_service import (  # noqa: F401
+    clean_excerpt,
+    retrieve_documents,
+    retrieve_for_chat,
+    to_sources,
+)
 from backend.services.vector_store import get_embedding_model_id
 
 logger = logging.getLogger(__name__)
@@ -44,26 +48,6 @@ NO_ANSWER = (
     "or ask about the brand, campaigns, the 2026 strategy, menu and cakes, "
     "social media, email or the Crumb Club."
 )
-
-
-def clean_excerpt(text: str, section: str = "") -> str:
-    """Return a chunk's body: one paragraph, bullet or table row per line.
-
-    Chunks start with their section path; drop it because the API returns
-    the section separately.
-    """
-    lines = [line.strip() for line in text.split("\n") if line.strip()]
-    if section and lines and lines[0] == section:
-        lines = lines[1:]
-    return _drop_leading_fragment("\n".join(lines))
-
-
-def _drop_leading_fragment(text: str) -> str:
-    """Chunks can start mid-sentence; drop a short lowercase lead-in fragment."""
-    if not text or not text[0].islower():
-        return text
-    match = re.search(r"[.!?:]\s+(?=[A-Z0-9•\"“])", text[:160])
-    return text[match.end():] if match else text
 
 
 def _history(conversation_id: uuid.UUID | None) -> list[tuple[str, str]]:
@@ -121,19 +105,6 @@ def _generate(
     return (answer, chat_deployment()) if answer else (_fallback(sources), None)
 
 
-def _to_sources(results: list[dict[str, str | int | float]]) -> list[Source]:
-    return [
-        Source(
-            document=str(result["source"]),
-            page=int(result["page"]) + 1,
-            section=str(result.get("section", "")),
-            excerpt=clean_excerpt(str(result["content"]), str(result.get("section", ""))),
-            score=round(float(result["score"]), 4),
-        )
-        for result in results
-    ]
-
-
 async def _prepare(question: str, conversation_id: uuid.UUID | None) -> tuple[
     list[tuple[str, str]], list[Source]
 ]:
@@ -142,8 +113,8 @@ async def _prepare(question: str, conversation_id: uuid.UUID | None) -> tuple[
         return [], []
     history = await run_in_threadpool(_history, conversation_id)
     search_query = await run_in_threadpool(_search_query, question, history)
-    results = await run_in_threadpool(retrieve_documents, search_query)
-    return history, _to_sources(results)
+    results = await run_in_threadpool(retrieve_for_chat, search_query)
+    return history, to_sources(results)
 
 
 def _record(

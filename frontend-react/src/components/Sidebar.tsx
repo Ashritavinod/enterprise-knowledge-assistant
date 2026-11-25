@@ -1,4 +1,4 @@
-import { FileText, MessageSquare, MessagesSquare, Plus, Star, Trash2, X, type LucideIcon } from "lucide-react";
+import { FileText, MessageSquare, MessagesSquare, PenLine, Plus, ShieldCheck, Star, Trash2, X, type LucideIcon } from "lucide-react";
 import type { Conversation, DocumentInfo } from "../types";
 import { documentColor } from "../topics";
 import { Link, usePath } from "../router";
@@ -33,6 +33,8 @@ interface Props {
 const NAV: { to: string; label: string; icon: LucideIcon }[] = [
   { to: "/", label: "Assistant", icon: MessagesSquare },
   { to: "/reviews", label: "Customer Reviews", icon: Star },
+  { to: "/brand-check", label: "Brand Check", icon: ShieldCheck },
+  { to: "/copywriter", label: "Copywriter", icon: PenLine },
 ];
 
 export function Sidebar({ open, documents, onClose, chat }: Props) {

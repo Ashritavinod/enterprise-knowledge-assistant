@@ -30,6 +30,7 @@ from backend.db import models  # noqa: E402
 from backend.db.database import check_db, get_engine, session_scope  # noqa: E402
 from backend.main import app  # noqa: E402
 from backend.routes.qa import NO_ANSWER, clean_excerpt  # noqa: E402
+from backend.services.rag_service import CHAT_PASSAGES  # noqa: E402
 
 logging.disable(logging.CRITICAL)
 
@@ -84,7 +85,7 @@ class QaApiTests(ApiTestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertTrue(body["found"])
-        self.assertTrue(1 <= len(body["sources"]) <= 3)
+        self.assertTrue(1 <= len(body["sources"]) <= CHAT_PASSAGES)
         self.assertIn("#E8456B", " ".join(s["excerpt"] for s in body["sources"]))
         for source in body["sources"]:
             self.assertTrue(source["document"].endswith(".pdf"))

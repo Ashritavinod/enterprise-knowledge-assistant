@@ -221,6 +221,28 @@ class RetrievalTests(unittest.TestCase):
     def test_empty_question_returns_nothing(self) -> None:
         self.assertEqual(rag_service.retrieve_documents(""), [])
 
+    def test_expand_query_swaps_in_document_terms(self) -> None:
+        query, topics = rag_service.expand_query("Ideas for a Christmas post?")
+        self.assertEqual(query, "Ideas for a holiday season post?")
+        self.assertEqual(len(topics), 1)
+        self.assertEqual(rag_service.expand_query("Hashtag rules?"), ("Hashtag rules?", []))
+
+    def test_chat_retrieval_finds_holiday_plans_for_christmas(self) -> None:
+        if not _uses_semantic_embeddings():
+            self.skipTest("requires fastembed semantic embeddings")
+        results = rag_service.retrieve_for_chat("write a social media campaign for christmas")
+        self.assertLessEqual(len(results), rag_service.CHAT_PASSAGES)
+        self.assertTrue(any("Holiday Bake Shop" in str(r["content"]) for r in results))
+        scores = [float(r["score"]) for r in results]
+        self.assertEqual(scores, sorted(scores, reverse=True))
+        self.assertEqual(len({(r["source"], r["content"]) for r in results}), len(results))
+
+    def test_chat_retrieval_drops_passages_far_below_the_best(self) -> None:
+        results = rag_service.retrieve_for_chat("How many hashtags can I use in a social post?")
+        self.assertTrue(results)
+        floor = float(results[0]["score"]) - rag_service.RELATIVE_MARGIN
+        self.assertTrue(all(float(r["score"]) >= floor for r in results))
+
 
 class IndexPersistenceTests(unittest.TestCase):
     def setUp(self) -> None:

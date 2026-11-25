@@ -12,7 +12,7 @@ import type { Insight, Overview, ProductsResponse, Review, ReviewFilters } from 
 const PAGE_SIZE = 25;
 const NEW_REVIEW_POLL_MS = 20000; // how often the page checks for newly arrived reviews
 
-function useBackend() {
+export function useBackend() {
   const [status, setStatus] = useState<BackendStatus>("checking");
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
   useEffect(() => {
@@ -33,7 +33,7 @@ function useBackend() {
   return { status, documents };
 }
 
-function ErrorNote({ error }: { error: unknown }) {
+export function ErrorNote({ error }: { error: unknown }) {
   if (!error) return null;
   return (
     <div className="alert alert--error" role="alert">

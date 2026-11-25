@@ -82,13 +82,14 @@ def deployment() -> str:
     return name
 
 
-def call_structured(system: str, user: str, name: str, schema: dict[str, Any]) -> dict[str, Any]:
+def call_structured(system: str, user: str, name: str, schema: dict[str, Any],
+                    temperature: float = 0.2) -> dict[str, Any]:
     """Ask the chat deployment for JSON matching `schema` (strict structured output)."""
     model = deployment()
     try:
         response = get_client().with_options(timeout=TIMEOUT_SECONDS).chat.completions.create(
             model=model,
-            temperature=0.2,
+            temperature=temperature,
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
             response_format={"type": "json_schema", "json_schema": {"name": name, "strict": True, "schema": schema}},
         )

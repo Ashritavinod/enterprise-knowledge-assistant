@@ -216,6 +216,53 @@ bundles or hero products it also says not to feature are removed.
 | `POST /reviews/insights` | Run the agent (`{"reclassify": true}` relabels every review) |
 | `GET /reviews/insights/latest` | The latest saved report |
 
+## Brand Check
+
+The **Brand Check** page (`/brand-check`) reviews draft copy against
+BrandGuidelines.pdf. Choose the channel (social post, email, web banner, menu
+or packaging, other) and paste the draft. Every issue quotes the words it is
+about, says how to fix them, and cites the guideline passage it comes from.
+
+- **Brand rules** are checked in code, so they are always caught: the banned
+  words (healthy, guilt-free, skinny, sinful), at most two emojis and three
+  hashtags on social, email subject lines of 45 characters or fewer with no
+  emojis, banner headlines of eight words or fewer, colours outside the
+  approved palette, and a reworded tagline.
+- **AI review** (Azure OpenAI) reads every brand guideline passage, plus the
+  most relevant passages from the other documents (for example discount limits
+  in the Campaign Playbook), and flags tone, voice and style problems. Issues
+  that cite no real passage are dropped, and quotes that aren't in the draft
+  are removed.
+- **Rewrite**: a second call rewrites the draft to fix every issue. The rewrite
+  is checked by the brand rules again before it is shown.
+
+The verdict and the score (100 minus 25 per must-fix, 10 per should-fix and 3
+per suggestion) are computed from the issues, not by the model. Without Azure
+OpenAI, only the rule checks run.
+
+`POST /brand/check` with `{"text": "...", "channel": "social", "subject": ""}`.
+
+## Copywriter
+
+The **Copywriter** page (`/copywriter`) writes three options of campaign copy
+for one product and one channel: Instagram, email or menu board. Each option
+is built on real customer reviews:
+
+- The model gets the product's best reviews, each with an id, and must list
+  every quote it uses with the review id and the exact words. A quote whose
+  words aren't in that review is removed. An option is dropped if its copy
+  puts in quotation marks anything that isn't in a review, or if it has no
+  verified quote left.
+- Quotes are shown exactly as the customer wrote them, with their name, city,
+  rating and date.
+- Every option is checked by the Brand Check rules. Email options always end
+  with the tagline, and seasonal products get a note about when they are on
+  sale.
+- **Full brand check** opens the option in Brand Check for the full AI review.
+
+`POST /copy/generate` with `{"product_id": 1, "channel": "instagram", "notes": ""}`
+(requires Azure OpenAI; returns 503 without it).
+
 ## Docker
 
 `docker compose up --build` starts PostgreSQL, the API (settings from `.env`

@@ -9,7 +9,9 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from backend.db.database import check_db, dispose_engine, init_db, session_scope
+from backend.routes.brand import router as brand_router
 from backend.routes.conversations import router as conversations_router
+from backend.routes.copywriter import router as copywriter_router
 from backend.routes.qa import router as qa_router
 from backend.routes.reviews import router as reviews_router
 from backend.services import review_dataset, review_feed
@@ -58,6 +60,8 @@ app = FastAPI(title="MarketMind Marketing Knowledge Assistant API", lifespan=lif
 app.include_router(qa_router)
 app.include_router(conversations_router)
 app.include_router(reviews_router)
+app.include_router(brand_router)
+app.include_router(copywriter_router)
 
 
 @app.get("/health")

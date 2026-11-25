@@ -40,6 +40,16 @@ function SourceCard({ source, index }: { source: Source; index: number }) {
   );
 }
 
+/** The passage numbers (1 to `count`) the text cites, like [2] or [1][3]. */
+function citedNumbers(text: string, count: number): Set<number> {
+  const cited = new Set<number>();
+  for (const m of text.matchAll(/\[(\d+)\]/g)) {
+    const n = Number(m[1]);
+    if (n >= 1 && n <= count) cited.add(n);
+  }
+  return cited;
+}
+
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
@@ -77,10 +87,17 @@ export function ChatMessage({ message, onRetry }: Props) {
   if (streaming && !message.text) return <TypingIndicator />;
 
   // Sources appear once the reply is complete, so the text has the stage while it streams.
-  const sources = streaming ? [] : message.sources ?? [];
-  const top = sources[0];
+  const retrieved = streaming ? [] : message.sources ?? [];
+  const top = retrieved[0];
   // Without Azure OpenAI the answer is the top passage itself: label where it came from.
   const isPassage = top !== undefined && message.text === top.excerpt;
+  // List only what the answer used: the passages it cites (keeping their numbers so
+  // [4] in the text still matches card 4), or the one passage shown as the answer.
+  // A reply that cites nothing (a greeting, "not in the documents") lists none.
+  const cited = citedNumbers(message.text, retrieved.length);
+  const sources = isPassage
+    ? [{ source: top, number: 1 }]
+    : retrieved.map((source, i) => ({ source, number: i + 1 })).filter((s) => cited.has(s.number));
 
   return (
     <div className="msg msg--assistant">
@@ -120,8 +137,8 @@ export function ChatMessage({ message, onRetry }: Props) {
             <div className="sources__heading">
               Sources <span className="pill">{sources.length}</span>
             </div>
-            {sources.map((s, i) => (
-              <SourceCard key={`${s.document}-${s.page}-${i}`} source={s} index={i} />
+            {sources.map(({ source, number }) => (
+              <SourceCard key={number} source={source} index={number - 1} />
             ))}
           </div>
         )}
