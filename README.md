@@ -234,11 +234,16 @@ about, says how to fix them, and cites the guideline passage it comes from.
   that cite no real passage are dropped, and quotes that aren't in the draft
   are removed.
 - **Rewrite**: a second call rewrites the draft to fix every issue. The rewrite
-  is checked by the brand rules again before it is shown.
+  goes through the same full check (rules and AI review); if it still has
+  problems it is rewritten once more. It is shown with its own score, and only
+  when it scores better than the draft.
 
-The verdict and the score (100 minus 25 per must-fix, 10 per should-fix and 3
-per suggestion) are computed from the issues, not by the model. Without Azure
-OpenAI, only the rule checks run.
+The verdict and the score are computed from the issues, not by the model: 100
+minus 25 for a must-fix, 10 for a should-fix and 3 for a suggestion, charged
+once per category at its worst severity (five tone issues cost the same as
+one). Model calls run at temperature 0 so the same draft gets the same result.
+Input with no real words (e.g. a pasted id) is reported as "nothing to review",
+with no score. Without Azure OpenAI, only the rule checks run.
 
 `POST /brand/check` with `{"text": "...", "channel": "social", "subject": ""}`.
 

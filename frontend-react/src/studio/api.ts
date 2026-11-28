@@ -20,13 +20,16 @@ export interface BrandIssue {
 
 export interface BrandCheck {
   channel: CheckChannel;
-  verdict: "on_brand" | "minor_changes" | "needs_changes";
-  score: number;
+  verdict: "on_brand" | "minor_changes" | "needs_changes" | "not_reviewable";
+  /** null when the input isn't marketing copy. */
+  score: number | null;
   summary: string;
   issues: BrandIssue[];
   strengths: string[];
   revised: string;
+  /** Every issue the full check (rules and AI review) found in the rewrite. */
   revised_flags: BrandIssue[];
+  revised_score: number | null;
   passages: Source[];
   model: string | null;
   ai_error: string | null;

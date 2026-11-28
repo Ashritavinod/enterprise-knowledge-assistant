@@ -30,6 +30,7 @@ const VERDICT: Record<BrandCheck["verdict"], { label: string; className: string 
   on_brand: { label: "On brand", className: "verdict--good" },
   minor_changes: { label: "Minor changes needed", className: "verdict--warn" },
   needs_changes: { label: "Needs changes", className: "verdict--bad" },
+  not_reviewable: { label: "Nothing to review", className: "verdict--warn" },
 };
 
 /** The draft with every quoted problem highlighted. */
@@ -200,7 +201,13 @@ export function BrandCheckPage() {
       <ErrorNote error={error} />
       {running && <Thinking text="Checking against the brand guidelines…" />}
 
-      {result && checked && !running && (
+      {result && checked && !running && result.score === null && (
+        <div className="alert alert--warn">
+          <Info size={16} /> {result.summary}
+        </div>
+      )}
+
+      {result && checked && !running && result.score !== null && (
         <>
           <section className="card">
             <div className="verdict-row">
@@ -234,6 +241,12 @@ export function BrandCheckPage() {
               <div className="alert alert--warn">
                 <Info size={16} /> The suggested rewrite couldn't be written ({result.ai_error}). The review below is complete.
               </div>
+            )}
+            {result.model && !result.ai_error && !result.revised && result.issues.length > 0 && (
+              <p className="small muted">
+                No suggested rewrite: the AI's rewrites didn't score better than your draft on a full re-check. Use the fixes
+                below.
+              </p>
             )}
             {result.issues.length > 0 && (
               <div>
@@ -294,12 +307,13 @@ export function BrandCheckPage() {
                   <div className="draft-view">{result.revised}</div>
                   {result.revised_flags.length > 0 ? (
                     <div className="alert alert--warn">
-                      <AlertTriangle size={16} /> The rewrite still breaks {result.revised_flags.length} brand rule
-                      {result.revised_flags.length > 1 ? "s" : ""}: {result.revised_flags.map((f) => f.category).join(", ")}.
+                      <AlertTriangle size={16} /> Re-checked: scores {result.revised_score}/100 (yours: {result.score}). Still
+                      flagged: {[...new Set(result.revised_flags.map((f) => f.category))].join(", ")}.
                     </div>
                   ) : (
                     <p className="small ok-text">
-                      <CircleCheck size={13} /> Passes every automated brand rule.
+                      <CircleCheck size={13} /> Re-checked: scores {result.revised_score}/100 with no issues (brand rules and AI
+                      review).
                     </p>
                   )}
                 </section>

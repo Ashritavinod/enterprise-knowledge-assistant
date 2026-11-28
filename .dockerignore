@@ -12,3 +12,11 @@ frontend/
 .git/
 logs/
 data/index/
+
+# Not needed in the API image
+tests/
+docs/
+data/archive/
+*.pptx
+.pytest_cache/
+.claude/

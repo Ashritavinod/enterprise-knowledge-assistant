@@ -13,8 +13,18 @@ comes from:
    can't see. It also suggests a compliant rewrite. Citations to passages that
    don't exist, and quotes that aren't in the draft, are removed.
 
-The verdict and score are computed from the issues, not by the model. Without
-Azure OpenAI (or if the call fails) the rule checks still run.
+The verdict and score are computed from the issues, not by the model: each
+category of problem costs points once, at its worst severity, so the score
+doesn't swing with how many near-duplicate issues the model happens to list.
+Model calls run at temperature 0 for repeatable results.
+
+The suggested rewrite goes through the same full check (rules and AI review). If
+it still has problems it is rewritten once more, and it is only offered when it
+scores better than the draft, so "Use and re-check" doesn't produce a worse score.
+
+Input that isn't marketing copy at all (random characters, a code) is reported
+as not reviewable, with no score and no rewrite. Without Azure OpenAI (or if the
+call fails) the rule checks still run.
 """
 
 import logging
@@ -234,6 +244,7 @@ def appears_in(quote: str, text: str) -> bool:
 # --- AI review -----------------------------------------------------------------
 
 CHECK_SCHEMA = _obj(
+    reviewable={"type": "boolean"},
     summary=STR,
     issues=_arr(_obj(
         severity={"type": "string", "enum": list(SEVERITIES)},
@@ -247,14 +258,22 @@ CHECK_SCHEMA = _obj(
 )
 CHECK_PROMPT = (
     "You are the brand compliance reviewer for Honeycrumb Bakehouse. Check the draft "
-    "against the numbered guideline passages ONLY. Report every way the draft breaks or "
+    "against the numbered guideline passages ONLY. Report the clear ways the draft breaks or "
     "falls short of a guideline: tone of voice for this channel, brand personality (warm, "
     "playful, honest, generous; never snobby, preachy or pushy, no pressure tactics), "
     "writing style (sentence case, sensory taste and texture words, 'made from scratch' only "
     "where allowed, at most one food pun on social, no jokes or emojis on allergen or food "
     "safety topics), channel standards, discount limits and claims that need review.\n"
-    "- severity: must_fix for a broken rule, should_fix for a clear tone or style problem, "
-    "suggestion for an optional improvement.\n"
+    "- reviewable: false if the draft is not marketing copy at all (random characters, a code "
+    "or id, a single meaningless word, text with no message); then return no issues and no "
+    "strengths, and say in the summary that there is nothing to review. Otherwise true.\n"
+    "- Be consistent: the same draft must always get the same findings. Only report an issue "
+    "you are confident a brand reviewer would flag; when in doubt, leave it out. Report each "
+    "problem once (one issue per problem, not one per sentence it appears in). A draft that "
+    "follows the guidelines should get no issues.\n"
+    "- severity: must_fix ONLY when the draft breaks an explicit rule a passage states (a "
+    "'never', 'must', 'do not' or a numeric limit); should_fix for a clear tone or style "
+    "problem; suggestion for an optional improvement.\n"
     "- quote: the exact words from the draft the issue is about (copied verbatim), or an "
     "empty string if the issue is about something missing.\n"
     "- citations: the numbers of the passages that state the guideline. Every issue must "
@@ -274,7 +293,9 @@ REWRITE_PROMPT = (
     "softened). Follow the guideline passages for this channel. Keep the same product, offer "
     "and facts, and a similar length and format. Write normal sentences: capitalise the first "
     "word of each sentence and proper names (sentence case never means all lowercase). Don't "
-    "invent products, prices, dates, discounts or claims.\n"
+    "invent products, prices, dates, discounts or claims. Don't introduce anything new that "
+    "the guidelines restrict (extra emojis, hashtags, puns, pressure words, 'made from scratch', "
+    "a changed tagline); the rewrite will be checked against the same guidelines.\n"
     "- subject: the rewritten email subject line (45 characters or fewer) if the draft has one, "
     "otherwise an empty string.\n"
     "- revised: the rewritten copy, without the subject line.\n"
@@ -295,8 +316,13 @@ def _ai_rewrite(text: str, channel: str, passages: list[Source], issues: list[di
         f"Issues to fix:\n{listing or '(none; polish lightly)'}\n\n"
         f"Draft:\n<<<\n{draft}\n>>>"
     )
-    data = call_structured(REWRITE_PROMPT, user, "brand_rewrite", REWRITE_SCHEMA)
-    return data["subject"].strip(), data["revised"].strip()
+    data = call_structured(REWRITE_PROMPT, user, "brand_rewrite", REWRITE_SCHEMA, temperature=0)
+    revised_subject, revised = data["subject"].strip(), data["revised"].strip()
+    if channel == "email" and not revised_subject:
+        revised_subject, revised = split_subject(revised)
+    if channel != "email":
+        revised_subject = ""
+    return revised_subject, revised.strip()
 
 
 def _ai_review(text: str, channel: str, passages: list[Source], rules: list[dict[str, Any]],
@@ -309,7 +335,7 @@ def _ai_review(text: str, channel: str, passages: list[Source], rules: list[dict
         f"Automated findings already reported:\n{automated}\n\n"
         f"Draft:\n<<<\n{draft}\n>>>"
     )
-    return call_structured(CHECK_PROMPT, user, "brand_check", CHECK_SCHEMA)
+    return call_structured(CHECK_PROMPT, user, "brand_check", CHECK_SCHEMA, temperature=0)
 
 
 RULE_TERMS = {
@@ -350,7 +376,12 @@ def _clean_ai_issues(items: list[dict[str, Any]], draft: str, passage_count: int
 
 
 def score(issues: list[dict[str, Any]]) -> int:
-    return max(0, 100 - sum(SEVERITY_COST[i["severity"]] for i in issues))
+    """100 minus the cost of each category of problem, charged once at its worst severity."""
+    worst: dict[str, int] = {}
+    for issue in issues:
+        key = issue.get("category", "").strip().lower()
+        worst[key] = max(worst.get(key, 0), SEVERITY_COST[issue["severity"]])
+    return max(0, 100 - sum(worst.values()))
 
 
 def verdict(issues: list[dict[str, Any]]) -> str:
@@ -360,6 +391,57 @@ def verdict(issues: list[dict[str, Any]]) -> str:
     if "should_fix" in severities:
         return "minor_changes"
     return "on_brand"
+
+
+def looks_like_copy(text: str) -> bool:
+    """False for input with no real words at all, e.g. a code like "W7I3OsycUkHW02E" or only emojis."""
+    for token in text.split():
+        word = re.sub(r"^\W+|\W+$", "", token)
+        if len(word) >= 2 and re.fullmatch(r"[^\W\d_]+(?:['’-][^\W\d_]+)*", word):
+            return True
+    return False
+
+
+def _sort(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(issues, key=lambda i: SEVERITIES.index(i["severity"]))
+
+
+def _full_check(text: str, channel: str, passages: list[Source], subject: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """(AI review, every issue): the hard rules plus the cleaned AI review of `text`."""
+    rules = rule_issues(text, channel, passages, subject)
+    review = _ai_review(text, channel, passages, rules, subject)
+    if not review["reviewable"]:
+        return review, rules
+    return review, _sort(rules + _clean_ai_issues(review["issues"], f"{subject}\n{text}", len(passages), rules))
+
+
+def _best_rewrite(text: str, channel: str, passages: list[Source], issues: list[dict[str, Any]],
+                  subject: str, draft_score: int) -> dict[str, Any] | None:
+    """A rewrite checked by the full review; rewritten once more if it still has problems.
+
+    Returns the best-scoring rewrite, or None if none scores better than the draft.
+    """
+    best: dict[str, Any] | None = None
+    source_text, source_subject, to_fix = text, subject, issues
+    for _attempt in range(2):
+        try:
+            revised_subject, revised = _ai_rewrite(source_text, channel, passages, to_fix, source_subject)
+            if not revised:
+                break
+            _review, found = _full_check(revised, channel, passages, revised_subject)
+        except AgentError:
+            if best is None:
+                raise
+            break  # keep the first rewrite
+        candidate = {"subject": revised_subject, "text": revised, "issues": found, "score": score(found)}
+        if best is None or candidate["score"] > best["score"]:
+            best = candidate
+        if not any(i["severity"] != "suggestion" for i in found):
+            break
+        source_text, source_subject, to_fix = revised, revised_subject, found
+    if best is None or best["score"] <= draft_score:
+        return None
+    return best
 
 
 def check_copy(text: str, channel: str = "other", subject: str = "") -> dict[str, Any]:
@@ -372,53 +454,41 @@ def check_copy(text: str, channel: str = "other", subject: str = "") -> dict[str
         text = text.strip()
     else:
         subject = ""
+    result: dict[str, Any] = {
+        "channel": channel, "verdict": "not_reviewable", "score": None, "issues": [], "strengths": [],
+        "revised": "", "revised_flags": [], "revised_score": None, "passages": [], "model": None, "ai_error": None,
+        "summary": "This doesn't look like marketing copy (no words to review). Paste a caption, email, "
+                   "banner or menu description to check it.",
+    }
+    if not looks_like_copy(f"{subject} {text}"):
+        return result
     passages = guideline_passages(f"{subject}\n{text}")
-    rules = rule_issues(text, channel, passages, subject)
+    result["passages"] = [p.model_dump() for p in passages]
 
-    model: str | None = None
-    ai_error: str | None = None
-    summary, strengths, revised, revised_subject, ai_issues = "", [], "", "", []
+    rules = _sort(rule_issues(text, channel, passages, subject))
+    issues, summary = rules, ""
     try:
-        model = deployment()
-        review = _ai_review(text, channel, passages, rules, subject)
-        draft = f"{subject}\n{text}"
-        ai_issues = _clean_ai_issues(review["issues"], draft, len(passages), rules)
-        summary, strengths = review["summary"].strip(), review["strengths"][:3]
-        if rules or ai_issues:
-            revised_subject, revised = _ai_rewrite(text, channel, passages, rules + ai_issues, subject)
+        result["model"] = deployment()
+        review, issues = _full_check(text, channel, passages, subject)
+        if not review["reviewable"]:
+            return {**result, "summary": review["summary"].strip() or result["summary"]}
+        summary, result["strengths"] = review["summary"].strip(), review["strengths"][:3]
+        if issues:
+            rewrite = _best_rewrite(text, channel, passages, issues, subject, score(issues))
+            if rewrite:
+                result["revised"] = (f"Subject: {rewrite['subject']}\n\n" if rewrite["subject"] else "") + rewrite["text"]
+                result["revised_flags"], result["revised_score"] = rewrite["issues"], rewrite["score"]
     except AgentUnavailable:
-        model = None
+        result["model"] = None
     except AgentError as error:
-        ai_error = str(error)
+        result["ai_error"] = str(error)
         if not summary:
-            model = None  # the review itself failed; only the rules ran
+            result["model"] = None  # the review itself failed; only the rules ran
+            issues = rules
 
-    issues = sorted(rules + ai_issues, key=lambda i: SEVERITIES.index(i["severity"]))
     if not summary:
         summary = (
             f"The automated brand rules found {len(rules)} issue{'s' if len(rules) != 1 else ''}."
-            + ("" if model else " The tone and style review needs Azure OpenAI.")
+            + ("" if result["model"] else " The tone and style review needs Azure OpenAI.")
         )
-    if channel != "email":
-        revised_subject = ""
-    elif revised and not revised_subject:
-        revised_subject, revised = split_subject(revised)
-        revised = revised.strip()
-    revised_flags = (
-        rule_issues(revised, channel, passages, revised_subject) if revised else []
-    )
-    if revised_subject:
-        revised = f"Subject: {revised_subject}\n\n{revised}"
-    return {
-        "channel": channel,
-        "verdict": verdict(issues),
-        "score": score(issues),
-        "summary": summary,
-        "issues": issues,
-        "strengths": strengths,
-        "revised": revised,
-        "revised_flags": revised_flags,
-        "passages": [p.model_dump() for p in passages],
-        "model": model,
-        "ai_error": ai_error,
-    }
+    return {**result, "verdict": verdict(issues), "score": score(issues), "summary": summary, "issues": issues}

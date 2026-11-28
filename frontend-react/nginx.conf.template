@@ -1,0 +1,40 @@
+# Serves the built React app and forwards /api/* to the FastAPI backend
+# (the same job the Vite dev server's proxy does locally).
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+
+    # Backend calls: /api/qa/ask -> ${BACKEND_URL}/qa/ask
+    location /api/ {
+        proxy_pass ${BACKEND_URL}/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $proxy_host;
+        # For an https backend (App Service): send the host name in the TLS handshake (SNI).
+        proxy_ssl_server_name on;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Chat answers stream line by line; don't hold them back.
+        proxy_buffering off;
+        proxy_cache off;
+        # Review analysis and copy generation can take a couple of minutes.
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        client_max_body_size 2m;
+    }
+
+    # Hashed build assets never change: cache them for a long time.
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        try_files $uri =404;
+    }
+
+    # Client-side routes (/reviews, /brand-check, ...) all load index.html.
+    location / {
+        add_header Cache-Control "no-cache";
+        try_files $uri $uri/ /index.html;
+    }
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+}

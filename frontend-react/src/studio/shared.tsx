@@ -67,20 +67,48 @@ export function Citations({ numbers, passages }: { numbers: number[]; passages: 
   );
 }
 
-export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
-  const [done, setDone] = useState(false);
-  const copy = async () => {
+/**
+ * Copy text to the clipboard. `navigator.clipboard` only exists on HTTPS and localhost,
+ * so over plain HTTP (e.g. a deployment reached by IP) fall back to a hidden textarea.
+ */
+export async function copyText(text: string): Promise<boolean> {
+  if (navigator.clipboard && window.isSecureContext) {
     try {
       await navigator.clipboard.writeText(text);
-      setDone(true);
-      setTimeout(() => setDone(false), 1500);
+      return true;
     } catch {
-      /* clipboard blocked; nothing to do */
+      /* permission denied: try the fallback */
     }
+  }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.top = "-1000px";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  area.setSelectionRange(0, text.length);
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  document.body.removeChild(area);
+  return ok;
+}
+
+export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+  const [state, setState] = useState<"idle" | "done" | "failed">("idle");
+  const copy = async () => {
+    setState((await copyText(text)) ? "done" : "failed");
+    setTimeout(() => setState("idle"), 1800);
   };
   return (
     <button className="btn btn--secondary btn--sm" onClick={copy}>
-      {done ? <Check size={14} /> : <Copy size={14} />} {done ? "Copied" : label}
+      {state === "done" ? <Check size={14} /> : <Copy size={14} />}{" "}
+      {state === "done" ? "Copied" : state === "failed" ? "Copy blocked: select and copy" : label}
     </button>
   );
 }

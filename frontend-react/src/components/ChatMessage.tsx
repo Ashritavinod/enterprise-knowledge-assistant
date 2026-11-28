@@ -4,6 +4,7 @@ import type { Message, Source } from "../types";
 import { documentColor, documentTitle } from "../topics";
 import { LogoMark } from "./Logo";
 import { RichText } from "./RichText";
+import { copyText } from "../studio/shared";
 
 function SourceCard({ source, index }: { source: Source; index: number }) {
   const [open, setOpen] = useState(false);
@@ -53,12 +54,9 @@ function citedNumbers(text: string, count: number): Set<number> {
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
+    if (await copyText(text)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
-    } catch {
-      /* clipboard blocked – ignore */
     }
   };
   return (

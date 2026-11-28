@@ -95,18 +95,40 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(brand_checker.rule_issues("Life’s sweeter by the crumb.", "other", PASSAGES), [])
 
     def test_score_and_verdict(self) -> None:
-        must = {"severity": "must_fix"}
-        should = {"severity": "should_fix"}
+        must = {"severity": "must_fix", "category": "Banned word"}
+        should = {"severity": "should_fix", "category": "Tone"}
         self.assertEqual((brand_checker.score([]), brand_checker.verdict([])), (100, "on_brand"))
         self.assertEqual((brand_checker.score([should]), brand_checker.verdict([should])), (90, "minor_changes"))
         self.assertEqual((brand_checker.score([must, should]), brand_checker.verdict([must, should])), (65, "needs_changes"))
-        self.assertEqual(brand_checker.score([must] * 5), 0)
+        # Each category costs once, at its worst severity: repeats don't pile up.
+        self.assertEqual(brand_checker.score([must] * 5 + [should] * 3), 65)
+        self.assertEqual(brand_checker.score([{**should, "category": "tone"}, {**must, "category": "Tone"}]), 75)
+        many = [{"severity": "must_fix", "category": f"c{n}"} for n in range(5)]
+        self.assertEqual(brand_checker.score(many), 0)
+
+    def test_looks_like_copy(self) -> None:
+        for text in ("W7I3OsycUkHW02E", "😍🎉", "  1234 #FF0000 ", ""):
+            self.assertFalse(brand_checker.looks_like_copy(text), text)
+        for text in ("Hi", "Fresh croissants!", "Life’s sweeter", "Don't miss it"):
+            self.assertTrue(brand_checker.looks_like_copy(text), text)
+
+
+CLEAN = {"reviewable": True, "summary": "Lovely.", "strengths": ["Warm."], "issues": []}
 
 
 class CheckCopyTests(unittest.TestCase):
-    def run_check(self, review: dict, rewrite: dict | None = None, **kwargs) -> dict:
+    def run_check(self, review: dict, rewrites: list[dict] | None = None, rewrite_review: dict | None = None,
+                  **kwargs) -> dict:
+        """`review` answers the draft check, `rewrite_review` (default: clean) the checks of each rewrite."""
+        rewrites = list(rewrites or [{"subject": "", "revised": "Golden and flaky."}])
+
         def fake(system: str, user: str, name: str, schema: dict, temperature: float = 0.2) -> dict:
-            return review if name == "brand_check" else rewrite or {"subject": "", "revised": "Golden and flaky."}
+            self.assertEqual(temperature, 0)
+            if name == "brand_rewrite":
+                return rewrites.pop(0) if len(rewrites) > 1 else rewrites[0]
+            body = kwargs["text"].split("\n\n")[-1].strip()  # the draft without any subject line
+            is_draft = f"{body}\n>>>" in user
+            return {"reviewable": True, **review} if is_draft else rewrite_review or CLEAN
 
         with mock.patch.object(brand_checker, "guideline_passages", return_value=PASSAGES), \
                 mock.patch.object(brand_checker, "deployment", return_value="fake-model"), \
@@ -132,27 +154,46 @@ class CheckCopyTests(unittest.TestCase):
             ],
         }
         result = self.run_check(review, text="HURRY! Our healthy croissant.", channel="social")
-        self.assertEqual(result["calls"], ["brand_check", "brand_rewrite"])
+        self.assertEqual(result["calls"], ["brand_check", "brand_rewrite", "brand_check"])
         ai_issues = [i for i in result["issues"] if i["source"] == "ai"]
         self.assertEqual([(i["quote"], i["citations"]) for i in ai_issues],
                          [("HURRY", [2]), ("", [3]), ("", [2])])
         self.assertEqual(ai_issues[2]["category"], "Writing style")
         self.assertEqual(result["issues"][0]["category"], "Banned word")  # must_fix sorts first
-        self.assertEqual((result["verdict"], result["score"], result["model"]), ("needs_changes", 45, "fake-model"))
-        self.assertEqual(result["revised"], "Golden and flaky.")
-        self.assertEqual(result["revised_flags"], [])
+        # Banned word 25 + Tone 10 (two issues, charged once) + Writing style 10.
+        self.assertEqual((result["verdict"], result["score"], result["model"]), ("needs_changes", 55, "fake-model"))
+        self.assertEqual((result["revised"], result["revised_flags"], result["revised_score"]), ("Golden and flaky.", [], 100))
 
-    def test_rewrite_is_checked_by_the_rules(self) -> None:
-        review = {"summary": "s", "strengths": [], "issues": []}
-        result = self.run_check(review, {"subject": "Short", "revised": "So skinny!"},
+    def test_rewrite_gets_the_full_check_and_a_second_try(self) -> None:
+        tone = {"severity": "should_fix", "category": "Tone", "quote": "", "problem": "Pushy.", "fix": "Soften.",
+                "citations": [2]}
+        rewrites = [{"subject": "Short", "revised": "So skinny!"}, {"subject": "Short", "revised": "Golden cookies."}]
+        result = self.run_check({**CLEAN, "issues": [tone]}, rewrites,
                                 text="Subject: Cookies are here\n\nA healthy cookie.", channel="email")
-        self.assertEqual(result["revised"], "Subject: Short\n\nSo skinny!")
-        self.assertEqual(categories(result["revised_flags"]), ["Banned word"])
+        self.assertEqual(result["calls"], ["brand_check", "brand_rewrite", "brand_check", "brand_rewrite", "brand_check"])
+        self.assertEqual(result["revised"], "Subject: Short\n\nGolden cookies.")
+        self.assertEqual((result["revised_flags"], result["revised_score"]), ([], 100))
+
+    def test_rewrite_no_better_than_the_draft_is_not_offered(self) -> None:
+        tone = {"severity": "should_fix", "category": "Tone", "quote": "", "problem": "Pushy.", "fix": "Soften.",
+                "citations": [2]}
+        result = self.run_check({**CLEAN, "issues": [tone]}, rewrite_review={**CLEAN, "issues": [tone]},
+                                text="Buy our cookies now.", channel="social")
+        self.assertEqual(result["calls"], ["brand_check", "brand_rewrite", "brand_check", "brand_rewrite", "brand_check"])
+        self.assertEqual((result["score"], result["revised"], result["revised_score"]), (90, "", None))
 
     def test_no_rewrite_when_on_brand(self) -> None:
-        result = self.run_check({"summary": "Lovely.", "strengths": ["Warm."], "issues": []},
-                                text="Flaky and golden.", channel="menu")
+        result = self.run_check(CLEAN, text="Flaky and golden.", channel="menu")
         self.assertEqual((result["verdict"], result["revised"], result["calls"]), ("on_brand", "", ["brand_check"]))
+
+    def test_gibberish_is_not_reviewed(self) -> None:
+        result = self.run_check(CLEAN, text="W7I3OsycUkHW02E", channel="social")
+        self.assertEqual((result["verdict"], result["score"], result["revised"], result["calls"]),
+                         ("not_reviewable", None, "", []))
+        # Words the heuristic lets through can still be judged not reviewable by the model.
+        result = self.run_check({**CLEAN, "reviewable": False, "summary": "Nothing to review."}, text="asdf qwer", channel="social")
+        self.assertEqual((result["verdict"], result["score"], result["summary"], result["calls"]),
+                         ("not_reviewable", None, "Nothing to review.", ["brand_check"]))
 
     def test_rules_still_run_without_ai(self) -> None:
         with mock.patch.object(brand_checker, "guideline_passages", return_value=PASSAGES):
